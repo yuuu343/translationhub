@@ -1,0 +1,45 @@
+translationhub — bundled photographic scene
+
+Local filename: alpenglow.webp
+Display name: 夕映えの稜線
+Work: Red sunset on a mountain
+Photographer: Nathan Anderson
+Location described by the source: Silverthorne, Colorado, United States
+Original publication date: May 24, 2017
+License: Creative Commons CC0 1.0 Universal Public Domain Dedication
+License URL: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+Verified individual file and licensing record:
+https://commons.wikimedia.org/wiki/File:Red_sunset_on_a_mountain_(Unsplash).jpg
+Permanent source revision inspected:
+https://commons.wikimedia.org/w/index.php?title=File:Red_sunset_on_a_mountain_(Unsplash).jpg&oldid=1095144703
+
+The individual Wikimedia Commons file record explicitly identifies this image
+as published under CC0 before Unsplash changed its sitewide license on June 5,
+2017. The original publication date was independently checked in the archived
+Unsplash photo page below; it says Published on May 24, 2017 and credits Nathan
+Anderson. This package relies on that original CC0 dedication, not on the
+current general Unsplash License.
+
+Archived original photo page (publication-date provenance):
+https://web.archive.org/web/20170623154327/https://unsplash.com/photos/upg_Mi62GOg
+Original photo page:
+https://unsplash.com/photos/upg_Mi62GOg
+Downloaded image source:
+https://images.unsplash.com/photo-1495611017777-295c6bf94f45
+Commons copy of the same original:
+https://upload.wikimedia.org/wikipedia/commons/d/da/Red_sunset_on_a_mountain_(Unsplash).jpg
+
+Local modifications: resized from 10905 x 4005 to 2560 x 940 pixels; converted
+to WebP quality 90; metadata omitted. No generative edits or recoloring.
+The app displays a responsive crop using CSS background-position center 51%.
+The photo is bundled locally. Viewing it makes no request to Unsplash,
+Wikimedia, the photographer, or any external image service.
+
+Rights and publication-date records checked November 19, 2026.
+Optional attribution: Photo by Nathan Anderson, CC0 1.0 (published May 24, 2017).
+This credit does not imply that the photographer endorses translationhub.
+
+The original procedural SVG presets have separate provenance in
+ARTWORK-LICENSE.txt. The photograph above is not an original illustration
+created for this application.

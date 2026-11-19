@@ -1,0 +1,8 @@
+PDF.js 6.5.438, distributed by Mozilla / PDF.js contributors.
+Source: https://github.com/mozilla/pdf.js
+Distribution: https://www.npmjs.com/package/pdfjs-dist/v/6.5.438
+License: Apache-2.0 (see pdf-LICENSE.txt).
+
+Vendored runtime files are unmodified minified releases. CMaps, standard fonts
+and WASM resources retain their accompanying license files in their directories.
+These assets are served from this application, not from a third-party CDN.

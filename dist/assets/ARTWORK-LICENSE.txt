@@ -1,0 +1,29 @@
+translationhub — bundled landscape artwork
+
+blue-hour.svg           青の時間 / Blue hour
+mountain-morning.svg    山の朝 / Mountain morning
+forest-stillness.svg    森の静けさ / Forest stillness
+
+These are original procedural vector illustrations created for translationhub.
+They are not photographs, and do not reproduce or contain third-party images.
+The deterministic authoring source is included as generate-scenes.mjs.
+
+The artwork and its generation source are dedicated to the public domain under
+CC0 1.0 Universal (CC0-1.0). To the extent legally possible, all copyright and
+related rights are waived. They may be copied, modified, and redistributed,
+including as part of commercial software, without asking permission.
+
+CC0 legal text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+No attribution is required. Suggested optional credit:
+"Original landscape illustrations for translationhub, CC0 1.0."
+
+The site antwi.dev was considered as visual inspiration only. Its images,
+photographs, source code, and other assets are not included in these files.
+
+User-supplied photos are not bundled or covered by this dedication. They stay
+within the user's browser storage. Any rights to those photos remain with their
+respective rights holders.
+
+App icons: icon-192.png and icon-512.png are raster versions of the project's
+original mark.svg. They follow the same license as mark.svg and the application,
+not the separate CC0 dedication for the three landscape illustrations above.

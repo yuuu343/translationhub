@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#222542" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' blob: data:; img-src 'self' blob: data:; connect-src 'self' http://127.0.0.1:8771 https://huggingface.co https://*.huggingface.co https://*.hf.co; object-src 'none'; base-uri 'self'; form-action 'none'"
+    />
+    <meta
+      name="description"
+      content="原文と訳文を並べて読む、文章とPDFの翻訳ワークスペース。"
+    />
+    <title>translationhub · 文章翻訳</title>
+    <link rel="icon" href="./mark.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./base.css" />
+    <link rel="stylesheet" href="./appearance.css" />
+    <link rel="stylesheet" href="./engines.css" />
+    <link rel="stylesheet" href="./pdf.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">本文へ移動</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="#text"
+          ><img
+            src="./mark.svg"
+            alt=""
+            width="33"
+            height="33"
+          />translation<span>hub</span></a
+        >
+        <nav aria-label="ワークスペース">
+          <button data-view="text" aria-current="page">
+            <i data-i="text"></i>文章翻訳</button
+          ><button data-view="pdf"><i data-i="pdf"></i>PDFリーダー</button>
+        </nav>
+        <div class="header-actions">
+          <button class="quiet" id="library">
+            <i data-i="library"></i><span>保存した対訳</span></button
+          ><button
+            class="icon-button"
+            id="settings"
+            aria-label="翻訳エンジン設定"
+            title="翻訳エンジン設定"
+          >
+            <i data-i="settings"></i>
+          </button>
+        </div>
+      </div>
+    </header>
+    <div class="shell">
+      <div class="hero scene-window">
+        <div class="hero-shade"></div>
+        <div class="hero-content">
+          <h1 id="view-title">文章翻訳</h1>
+          <button id="appearance" class="glass">
+            <i data-i="palette"></i>外観
+          </button>
+        </div>
+      </div>
+      <main id="main" tabindex="-1">
+        <section id="text-area">
+          <div class="work-card">
+            <div class="work-controls">
+              <div class="language-pair">
+                <label class="lang-select"
+                  ><span class="sr-only">原文の言語</span
+                  ><select id="from"></select></label
+                ><button
+                  id="swap"
+                  class="icon-button"
+                  title="原文と訳文の入れ替え"
+                  aria-label="原文と訳文の入れ替え"
+                >
+                  <i data-i="swap"></i></button
+                ><label class="lang-select"
+                  ><span class="sr-only">訳文の言語</span
+                  ><select id="to"></select
+                ></label>
+              </div>
+              <div class="toolbar-right">
+                <button class="engine-chip" id="engine">
+                  <i data-i="cpu"></i><span id="engine-name">翻訳エンジン</span
+                  ><i data-i="chevron"></i></button
+                ><span class="divider"></span>
+                <div class="layout-controls" aria-label="表示形式">
+                  <button
+                    id="side"
+                    title="左右に並べる"
+                    aria-label="左右に並べる"
+                    aria-pressed="true"
+                  >
+                    <i data-i="columns"></i></button
+                  ><button
+                    id="stack"
+                    title="上下に並べる"
+                    aria-label="上下に並べる"
+                    aria-pressed="false"
+                  >
+                    <i data-i="rows"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="panels" id="panels">
+              <section class="read-pane">
+                <div class="pane-heading">
+                  <div>
+                    <i data-i="pen"></i>
+                    <h2>原文</h2>
+                  </div>
+                  <button class="mini" id="edit">
+                    <i data-i="edit"></i><span>編集</span>
+                  </button>
+                </div>
+                <textarea
+                  id="input"
+                  class="reading"
+                  placeholder="翻訳したい文章を入力、または貼り付け…"
+                  aria-label="翻訳したい文章"
+                  spellcheck="false"
+                ></textarea>
+                <div class="reading prose" id="original" hidden></div>
+                <div class="pane-bottom">
+                  <small id="count">0 文字</small
+                  ><button id="new" class="mini">
+                    <i data-i="plus"></i>新規
+                  </button>
+                </div>
+              </section>
+              <section class="read-pane target">
+                <div class="pane-heading">
+                  <div>
+                    <i data-i="translate"></i>
+                    <h2>訳文</h2>
+                  </div>
+                  <div>
+                    <button class="mini" id="revise" hidden>
+                      <i data-i="edit"></i>修正</button
+                    ><button class="mini" id="copy">
+                      <i data-i="copy"></i>コピー
+                    </button>
+                  </div>
+                </div>
+                <div class="reading prose" id="translation"></div>
+                <div class="pane-bottom">
+                  <small id="match-info" aria-live="polite"></small>
+                </div>
+              </section>
+            </div>
+            <div class="actionbar">
+              <span class="privacy-line"
+                ><i data-i="shield"></i><span id="privacy"></span
+              ></span>
+              <div class="action-buttons">
+                <button id="save" class="secondary">
+                  <i data-i="bookmark"></i>対訳を保存</button
+                ><button id="run" class="primary">
+                  <i data-i="translate"></i><span>翻訳する</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="below">
+            <div class="section-label">
+              <i data-i="book"></i>
+              <h2>例文で試す</h2>
+            </div>
+            <div class="samples">
+              <button data-sample="letter">
+                <span class="sample-icon letter"><i data-i="chart"></i></span
+                ><span
+                  ><strong>株主への手紙</strong
+                  ><small>決算レター · 英語 → 日本語</small></span
+                ><i data-i="open"></i></button
+              ><button data-sample="paper">
+                <span class="sample-icon paper"><i data-i="atom"></i></span
+                ><span
+                  ><strong>研究の要旨</strong
+                  ><small>技術論文 · 英語 → 日本語</small></span
+                ><i data-i="open"></i>
+              </button>
+            </div>
+          </div>
+        </section>
+        <section id="pdf-area" hidden>
+          <div class="pdf-global">
+            <div class="language-pair">
+              <label
+                >原文
+                <select id="pdf-from"></select></label
+              ><label
+                >訳文
+                <select id="pdf-to"></select
+              ></label>
+            </div>
+            <button class="engine-chip" id="pdf-engine">
+              <i data-i="cpu"></i><span></span>
+            </button>
+          </div>
+          <div id="pdf-mount"></div>
+        </section>
+      </main>
+      <footer>
+        <span>translationhub</span
+        ><button id="about">プライバシーとソースコード</button>
+      </footer>
+    </div>
+    <dialog id="dialog">
+      <div class="dialog-head">
+        <h2 id="dialog-title"></h2>
+        <button class="icon-button" id="close" aria-label="閉じる">
+          <i data-i="x"></i>
+        </button>
+      </div>
+      <div id="dialog-body"></div>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <input
+      type="file"
+      accept=".json,application/json"
+      id="import-file"
+      hidden
+    />
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,77 @@
+.engine-settings {
+  display: grid;
+  gap: 12px;
+}
+.engine-field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.engine-field input,
+.engine-field select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line, #d9dfdc);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: inherit;
+  padding: 9px 11px;
+  font: inherit;
+}
+.engine-field input:focus,
+.engine-field select:focus {
+  outline: 2px solid var(--accent, #2c6b61);
+  outline-offset: 2px;
+}
+.engine-description,
+.engine-hint,
+.engine-status {
+  margin: 0;
+  line-height: 1.65;
+  font-size: 0.82rem;
+}
+.engine-hint {
+  opacity: 0.72;
+}
+.engine-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+.engine-check input {
+  flex: 0 0 auto;
+  margin-top: 0.35em;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent, #2c6b61);
+}
+.engine-command {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 10px;
+  background: var(--bg, #f3f5f3);
+  border-radius: 6px;
+  font-size: 0.72rem;
+}
+.engine-settings button {
+  cursor: pointer;
+  min-height: 40px;
+  border: 1px solid var(--line, #d9dfdc);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+}
+.engine-settings button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+.engine-status {
+  min-height: 1.65em;
+  color: var(--accent, #2c6b61);
+  overflow-wrap: anywhere;
+}
