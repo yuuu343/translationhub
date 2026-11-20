@@ -1,4 +1,14 @@
+import { modelText, segmentText } from "./documents.js";
+
 // Offsets refer to UTF-16 positions in the original text nodes.
+function sentenceRanges(text, language) {
+  let offset = 0;
+  return segmentText(text, language, { granularity: "sentence" }).map((s) => {
+    const start = offset + s.gap.length;
+    offset = start + s.source.length;
+    return [start, offset];
+  });
+}
 function clean(text) {
   return text
     .normalize("NFKC")
@@ -125,12 +135,27 @@ export function installAlignment({
       setHint("対応する語句を表示");
       return;
     }
-    element.classList.add("matched");
-    setHint("対応する文を表示", "pair");
     const direction = {
       source: side === "source" ? doc.from : doc.to,
       target: side === "source" ? doc.to : doc.from,
     };
+    let hint = "対応する文を表示";
+    let estimated;
+    if (seg.kind === "paragraph") {
+      const from = sentenceRanges(seg[side], direction.source);
+      if (from.length > 1) {
+        hint = "対応する段落を表示";
+        const index = from.findIndex(([start, end]) => start <= a && b <= end);
+        const to = sentenceRanges(seg[other], direction.target);
+        if (index >= 0 && from.length === to.length) {
+          estimated = to[index];
+          hint = "文の順序から推定した対応箇所";
+        }
+      }
+    }
+    if (estimated) paint(element, ...estimated);
+    else element.classList.add("matched");
+    setHint(hint, "pair");
     if (
       !canSuggest(direction) ||
       text.trim().length < 2 ||
@@ -143,7 +168,10 @@ export function installAlignment({
       const job = {};
       pending = job;
       try {
-        const result = await translate(text, direction);
+        const result = await translate(
+          modelText({ source: text, kind: seg.kind }, direction.source),
+          direction,
+        );
         if (tick !== version || manual) return;
         const hit = exactOccurrence(seg[other], result);
         if (hit) {

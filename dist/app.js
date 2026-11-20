@@ -1,8 +1,6 @@
 import { icons } from "./icons.js";
 import {
   languages,
-  sampleDoc,
-  segmentText,
   validateDocument,
   shelf,
   exportDoc,
@@ -10,6 +8,8 @@ import {
 } from "./documents.js";
 import { installAlignment } from "./alignment.js";
 import { initAppearance, mountAppearance } from "./appearance.js";
+import { initTextSizing } from "./text-size.js";
+import { prepareTextJob, translateTextUnit } from "./text-job.js";
 import {
   translate,
   engineLabel,
@@ -31,9 +31,9 @@ let pdf,
   activeJob,
   currentId,
   dirty = false,
-  editMode = true,
-  sample = false;
+  editMode = true;
 let segments = [],
+  originalText = "",
   label = "",
   title = "",
   pdfBusy = false,
@@ -94,14 +94,13 @@ dialog.addEventListener("click", (e) => {
 });
 function markDirty() {
   dirty = true;
-  sample = false;
 }
 function doc() {
   const { source: from, target: to } = getLanguages();
   return {
     format: "translationhub.text",
     version: 1,
-    text: input.value,
+    text: originalText,
     segments,
     engine: label,
     from,
@@ -122,7 +121,6 @@ const align = installAlignment({
   canSuggest: (direction) =>
     !activeJob &&
     !dialog.open &&
-    !sample &&
     !editMode &&
     isLocalEngine() &&
     readyDirections.has(directionKey(direction)),
@@ -133,11 +131,9 @@ const align = installAlignment({
 });
 function setHint(message, action = "") {
   const hint = $("match-info");
-  const fallback = sample
-    ? "収録例文 · 語句を選んで比較"
-    : segments.some((s) => s.target)
-      ? "原文・訳文のどちらからでも選択できます"
-      : "";
+  const fallback = segments.some((s) => s.target)
+    ? "原文・訳文のどちらからでも選択できます"
+    : "";
   hint.replaceChildren(document.createTextNode(message || fallback));
   if (action) {
     const b = button(
@@ -175,7 +171,10 @@ function controls() {
   $("revise").hidden = !hasOutput || !!activeJob;
   $("run").lastElementChild.textContent = activeJob
     ? "中止"
-    : hasOutput && segments.some((s) => !s.target)
+    : hasOutput &&
+        label === engineLabel() &&
+        segments.every((s) => s.kind) &&
+        segments.some((s) => !s.target)
       ? "続きから翻訳"
       : "翻訳する";
   for (const id of ["from", "to", "swap", "new"]) $(id).disabled = !!activeJob;
@@ -211,8 +210,9 @@ function updateLangOptions() {
     $(id).value = id.endsWith("from") ? "en" : "ja";
   }
 }
-function applyDoc(data, id = null, isSample = false) {
+function applyDoc(data, id = null) {
   selectedSentence = 0;
+  originalText = data.text;
   input.value = data.text;
   segments = data.segments;
   label = data.engine;
@@ -222,7 +222,6 @@ function applyDoc(data, id = null, isSample = false) {
   currentId = id;
   editMode = !segments.length;
   dirty = false;
-  sample = isSample;
   draw();
 }
 function canReplace() {
@@ -246,6 +245,7 @@ $("edit").onclick = () => {
   input.focus();
 };
 input.addEventListener("input", () => {
+  originalText = input.value;
   segments = [];
   title = "";
   label = "";
@@ -272,7 +272,8 @@ $("swap").onclick = () => {
       edited: s.edited,
       links: s.links.map(([a, b, c, d]) => [c, d, a, b]),
     }));
-    input.value = segments.map((s) => s.gap + s.source).join("");
+    originalText = segments.map((s) => s.gap + s.source).join("");
+    input.value = originalText;
     editMode = false;
   } else {
     segments = [];
@@ -372,19 +373,20 @@ async function run() {
   }
   const controller = new AbortController(),
     engine = engineLabel();
-  const resume =
-    label === engine &&
-    segments.some((s) => s.target) &&
-    segments.some((s) => !s.target);
+  const { next, resume } = prepareTextJob(
+    originalText,
+    langs.source,
+    engineState.engine,
+    label === engine ? segments : [],
+  );
   if (
     !resume &&
     segments.some((s) => s.edited) &&
     !confirm("手で修正した訳文も含めて翻訳し直しますか？")
   )
     return;
-  const next = resume ? segments : segmentText(input.value, langs.source);
   if (next.length > 20000) {
-    notify("2万文以内に分けてください。");
+    notify("文章が長いため、いくつかに分けて翻訳してください。");
     return;
   }
   activeJob = controller;
@@ -394,12 +396,13 @@ async function run() {
     for (let i = 0; i < next.length; i++) {
       const seg = next[i];
       if (resume && seg.target) continue;
-      $("match-info").textContent =
-        i + 1 + " / " + next.length + " 文を翻訳中…";
-      const translated = await translate(seg.source, {
-        ...langs,
-        signal: controller.signal,
-      });
+      $("match-info").textContent = "翻訳中… " + (i + 1) + " / " + next.length;
+      const translated = await translateTextUnit(
+        seg,
+        { ...langs, signal: controller.signal },
+        engineState.engine,
+        translate,
+      );
       if (controller.signal.aborted) break;
       if (!translated?.trim())
         throw Error("翻訳エンジンから空の応答が届きました。");
@@ -626,13 +629,6 @@ $("import-file").onchange = async (e) => {
     notify(err.message);
   }
 };
-for (const b of document.querySelectorAll("[data-sample]"))
-  b.onclick = () => {
-    if (canReplace()) {
-      applyDoc(sampleDoc(b.dataset.sample), null, true);
-      notify("収録例文を開きました。原文または訳文の語句を選べます。");
-    }
-  };
 async function showView(mode) {
   mode = mode === "pdf" ? "pdf" : "text";
   $("text-area").hidden = mode !== "text";
@@ -743,5 +739,6 @@ try {
     (innerWidth <= 520 ? "stack" : "side");
 } catch {}
 setLayout(layout === "stack" ? "stack" : "side", false);
+initTextSizing();
 draw();
 showView(location.hash.slice(1));
