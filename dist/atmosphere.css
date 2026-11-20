@@ -1,0 +1,201 @@
+/* One fixed sheet behind the complete workspace. Text and controls form their
+   own layers so that background strength never changes glyph opacity. */
+:root {
+  --sheet: #fbf8f3;
+  --wash-a: 245 172 161;
+  --wash-b: 238 184 171;
+  --wash-c: 245 218 159;
+  --reading-opacity: .88;
+  --reading-source-surface: rgb(255 255 255 / var(--reading-opacity));
+  --reading-target-surface: rgb(250 249 247 / var(--reading-opacity));
+}
+:root[data-scene="flight"] {
+  --sheet: #f5f7f5;
+  --wash-a: 158 195 204;
+  --wash-b: 172 196 210;
+  --wash-c: 239 208 164;
+}
+:root[data-scene="sunlit"] {
+  --sheet: #fbf9f1;
+  --wash-a: 250 197 93;
+  --wash-b: 248 171 123;
+  --wash-c: 248 213 119;
+}
+body { background: #faf9f6; }
+#atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  overflow: clip;
+  pointer-events: none;
+  user-select: none;
+  contain: strict;
+  background: var(--scene-image) var(--scene-position) / cover no-repeat;
+  opacity: var(--scene-opacity);
+  --scroll-shift: 0px;
+}
+:is([data-scene="sakura"], [data-scene="flight"], [data-scene="sunlit"]) #atmosphere {
+  background:
+    radial-gradient(ellipse at 96% 11%, rgb(var(--wash-a) / .36), transparent 26%),
+    radial-gradient(ellipse at -7% 76%, rgb(var(--wash-b) / .49), transparent 31%),
+    radial-gradient(ellipse at 58% -5%, rgb(var(--wash-c) / .18), transparent 32%),
+    radial-gradient(ellipse at 89% 104%, rgb(var(--wash-b) / .33), transparent 23%),
+    var(--sheet);
+}
+:is([data-scene="sakura"], [data-scene="flight"], [data-scene="sunlit"]) #atmosphere::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: url("./assets/atmosphere/grain.png") repeat;
+  opacity: .26;
+  mix-blend-mode: multiply;
+}
+.scene-motif {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: calc(var(--size) * clamp(.74px, .070vw, 1.42px));
+  transform: translate(-50%, -50%) translateY(var(--scroll-shift)) rotate(var(--angle));
+  line-height: 0;
+}
+.scene-motif img {
+  width: 100%;
+  height: auto;
+  animation: paper-drift var(--duration) ease-in-out var(--phase) infinite alternate both;
+  animation-play-state: paused;
+}
+#atmosphere[data-moving="true"] .scene-motif img { animation-play-state: running; }
+[data-scene="flight"] .scene-motif img { animation-name: paper-glide; }
+.scene-motif[data-depth="far"] { opacity: .49; filter: blur(1.3px); }
+.scene-motif[data-depth="middle"] { opacity: .9; }
+.scene-motif[data-depth="soft"] { opacity: .72; filter: blur(2.6px); }
+.scene-motif[data-depth="near"] { opacity: .77; filter: blur(8px); }
+.scene-motif[data-depth="far"], .scene-motif[data-depth="middle"] {
+  transform: translate(-50%, -50%) translateY(calc(var(--scroll-shift) * .3)) rotate(var(--angle));
+}
+@keyframes paper-drift {
+  from { transform: translate(0, -4px) rotate(-4deg); }
+  to { transform: translate(var(--drift), 8px) rotate(6deg); }
+}
+@keyframes paper-glide {
+  from { transform: translate(-7px, 1px) rotate(-3deg); }
+  to { transform: translate(12px, -7px) rotate(3deg); }
+}
+:root[data-motion="off"] .scene-motif img { animation: none; }
+.site-header {
+  background: rgb(255 254 252 / .86);
+  border-color: rgb(89 74 74 / .14);
+}
+.shell { padding-top: 0; }
+.hero.scene-window {
+  display: flex;
+  flex: none;
+  height: clamp(92px, 12.5vh, 132px);
+  background: transparent;
+  border-radius: 0;
+  overflow: visible;
+}
+.hero-content {
+  width: 100%;
+  padding: 0 2px;
+  align-items: center;
+  color: #302d32;
+}
+.hero h1 {
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", "Noto Serif JP", Georgia, serif;
+  font-size: clamp(1.95rem, 3vw, 2.85rem);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: .055em;
+  text-shadow: none;
+}
+:root:is([data-scene="custom"], [data-scene="alpenglow"], [data-scene="blue-hour"], [data-scene="mountain-morning"], [data-scene="forest-stillness"]) .hero h1 {
+  color: #fff;
+  background: rgb(29 35 46 / .76);
+  border-radius: 8px;
+  padding: .08em .36em .12em;
+}
+.hero .glass {
+  background: rgb(255 254 252 / .92);
+  color: #433e45;
+  border: 1px solid rgb(93 76 81 / .23);
+  font-weight: 550;
+  box-shadow: 0 2px 7px rgb(62 41 45 / .05);
+}
+.shell main { margin-top: 0; }
+#text-area > .work-card {
+  background: transparent;
+  border-color: rgb(97 79 83 / .21);
+  box-shadow: 0 8px 29px -13px rgb(49 35 39 / .19);
+}
+.work-controls {
+  border-radius: 15px 15px 0 0;
+  background: rgb(255 254 253 / .95);
+}
+.read-pane { background: var(--reading-source-surface); }
+.read-pane.target { background: var(--reading-target-surface); }
+/* Lift only the darkest pigments under the reading area. Lighten blends by
+   channel, so the paper, highlights and clear space stay exactly as painted. */
+:is([data-scene="sakura"], [data-scene="flight"], [data-scene="sunlit"]) .panels {
+  position: relative;
+}
+:is([data-scene="sakura"], [data-scene="flight"], [data-scene="sunlit"]) .panels::before,
+:is([data-scene="sakura"], [data-scene="flight"], [data-scene="sunlit"]) .appearance-reading-preview::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #9a999e;
+  mix-blend-mode: lighten;
+  pointer-events: none;
+}
+.appearance-reading-preview::after { z-index: -1; }
+.appearance-reading-preview { background: #faf9f6; }
+.panels .read-pane { position: relative; }
+/* A user's photograph can be completely black. Keep a narrow light contour
+   around the ink as the surface fades, leaving open areas of the photo clear. */
+:root:is([data-scene="custom"], [data-scene="alpenglow"], [data-scene="blue-hour"], [data-scene="mountain-morning"], [data-scene="forest-stillness"]) :is(.read-pane, .appearance-preview-pane) {
+  --halo: rgb(255 255 255 / clamp(0, calc(.95 - 2 * var(--reading-opacity)), .95));
+  text-shadow: 0 1px 1px var(--halo), 0 -1px 1px var(--halo), 1px 0 1px var(--halo), -1px 0 1px var(--halo);
+}
+.read-pane textarea { text-shadow: inherit; }
+.actionbar { background: rgb(255 254 253 / .97); }
+:root:is([data-scene="custom"], [data-scene="alpenglow"], [data-scene="blue-hour"], [data-scene="mountain-morning"], [data-scene="forest-stillness"]) .shell > footer > * {
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgb(255 254 252 / .94);
+}
+@media (max-width: 760px) {
+  .scene-motif {
+    left: var(--mx);
+    top: var(--my);
+    width: calc(var(--size) * clamp(.63px, .112vw, .82px));
+  }
+  .hero.scene-window { height: 83px; }
+  .hero-content { padding: 0 5px; }
+  .hero h1 { font-size: 1.9rem; }
+  .hero .glass { padding: 7px 11px; }
+}
+@media print {
+  #atmosphere { display: none; }
+  .read-pane, .read-pane.target { background: white; }
+}
+@media (max-width: 520px) {
+  .forced-side .pane-heading { gap: 1px; }
+  .forced-side .pane-heading > div { gap: 3px; }
+  .forced-side .pane-heading h2 { white-space: nowrap; }
+  .forced-side .pane-heading .mini {
+    position: relative;
+    width: 28px;
+    height: 32px;
+    padding: 0;
+  }
+  .forced-side .pane-heading .mini span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}

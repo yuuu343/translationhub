@@ -23,8 +23,10 @@
     <link rel="stylesheet" href="./appearance.css" />
     <link rel="stylesheet" href="./engines.css" />
     <link rel="stylesheet" href="./pdf.css" />
+    <link rel="stylesheet" href="./atmosphere.css" />
   </head>
   <body>
+    <div id="atmosphere" aria-hidden="true" inert></div>
     <a class="skip" href="#main">本文へ移動</a>
     <header class="site-header">
       <div class="header-inner">
@@ -57,7 +59,6 @@
     </header>
     <div class="shell">
       <div class="hero scene-window">
-        <div class="hero-shade"></div>
         <div class="hero-content">
           <h1 id="view-title">文章翻訳</h1>
           <button id="appearance" class="glass">
@@ -116,7 +117,7 @@
                     <i data-i="pen"></i>
                     <h2>原文</h2>
                   </div>
-                  <button class="mini" id="edit">
+                  <button class="mini" id="edit" title="原文を編集">
                     <i data-i="edit"></i><span>編集</span>
                   </button>
                 </div>
@@ -143,10 +144,10 @@
                     <h2>訳文</h2>
                   </div>
                   <div>
-                    <button class="mini" id="revise" hidden>
-                      <i data-i="edit"></i>修正</button
-                    ><button class="mini" id="copy">
-                      <i data-i="copy"></i>コピー
+                    <button class="mini" id="revise" title="訳文を修正" hidden>
+                      <i data-i="edit"></i><span>修正</span></button
+                    ><button class="mini" id="copy" title="訳文をコピー">
+                      <i data-i="copy"></i><span>コピー</span>
                     </button>
                   </div>
                 </div>

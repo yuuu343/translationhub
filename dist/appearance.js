@@ -2,8 +2,10 @@
 const STORAGE_KEY = "translationhub.appearance.v1";
 const PHOTO_DB = "translationhub-appearance";
 const DEFAULTS = Object.freeze({
-  scene: "alpenglow",
+  scene: "sakura",
   opacity: 100,
+  readingTransparency: 12,
+  motion: "auto",
   font: "sans",
   fontSize: 18,
   lineHeight: 1.95,
@@ -12,6 +14,30 @@ const sceneURL = (name) =>
   new URL(`./assets/${name}.svg`, import.meta.url).href;
 export const SCENES = Object.freeze([
   {
+    id: "sakura",
+    name: "花霞",
+    image: new URL("./assets/atmosphere/sakura-preview.webp", import.meta.url).href,
+    base: "#f7edf2",
+    accent: "#8d4f79",
+    position: "center",
+  },
+  {
+    id: "flight",
+    name: "燕の空",
+    image: new URL("./assets/atmosphere/flight-preview.webp", import.meta.url).href,
+    base: "#edf3f9",
+    accent: "#3b668c",
+    position: "center",
+  },
+  {
+    id: "sunlit",
+    name: "陽だまり",
+    image: new URL("./assets/atmosphere/sunlit-preview.webp", import.meta.url).href,
+    base: "#f6f2e9",
+    accent: "#8a6c3f",
+    position: "center",
+  },
+  {
     id: "alpenglow",
     name: "夕映えの稜線",
     subtitle: "雪山を染める最後の光",
@@ -19,6 +45,7 @@ export const SCENES = Object.freeze([
     base: "#eef1f7",
     accent: "#385ed1",
     position: "center 51%",
+    legacy: true,
   },
   {
     id: "blue-hour",
@@ -27,6 +54,7 @@ export const SCENES = Object.freeze([
     image: sceneURL("blue-hour"),
     base: "#e9edf6",
     accent: "#385ed1",
+    legacy: true,
   },
   {
     id: "mountain-morning",
@@ -35,6 +63,7 @@ export const SCENES = Object.freeze([
     image: sceneURL("mountain-morning"),
     base: "#eef0f2",
     accent: "#36658a",
+    legacy: true,
   },
   {
     id: "forest-stillness",
@@ -43,6 +72,7 @@ export const SCENES = Object.freeze([
     image: sceneURL("forest-stillness"),
     base: "#e8efec",
     accent: "#2b726b",
+    legacy: true,
   },
 ]);
 export const READING_FONTS = Object.freeze([
@@ -70,6 +100,7 @@ let customPhotoURL = null;
 let persistedCustomPhoto = false;
 let initializePromise;
 let sequence = 0;
+let motionQuery;
 const subscribers = new Set();
 const clamp = (value, low, high, fallback) =>
   Number.isFinite(Number(value))
@@ -81,6 +112,8 @@ function normalize(value = {}) {
   return {
     scene: knownScenes.includes(value.scene) ? value.scene : DEFAULTS.scene,
     opacity: Math.round(clamp(value.opacity, 0, 100, DEFAULTS.opacity)),
+    readingTransparency: Math.round(clamp(value.readingTransparency, 0, 100, DEFAULTS.readingTransparency)),
+    motion: ["auto", "on", "off"].includes(value.motion) ? value.motion : DEFAULTS.motion,
     font: READING_FONTS.some((font) => font.id === value.font)
       ? value.font
       : DEFAULTS.font,
@@ -89,6 +122,22 @@ function normalize(value = {}) {
       Math.round(clamp(value.lineHeight, 1.5, 2.5, DEFAULTS.lineHeight) * 100) /
       100,
   };
+}
+
+function initializeMotion() {
+  if (motionQuery || !globalThis.matchMedia) return;
+  motionQuery = matchMedia("(prefers-reduced-motion: reduce)");
+  const changed = () => {
+    if (preferences.motion !== "auto") return;
+    applyPreferences();
+    emitChange();
+  };
+  if (motionQuery.addEventListener) motionQuery.addEventListener("change", changed);
+  else motionQuery.addListener(changed);
+}
+
+function motionEnabled() {
+  return preferences.motion === "on" || (preferences.motion === "auto" && !motionQuery?.matches);
 }
 
 function photoDatabase() {
@@ -130,9 +179,10 @@ async function photoOperation(mode, action) {
 }
 
 function applyPreferences() {
+  initializeMotion();
   const root = document.documentElement;
   const scene =
-    SCENES.find((item) => item.id === preferences.scene) || SCENES[0];
+    SCENES.find((item) => item.id === preferences.scene) || SCENES.find((item) => item.id === "alpenglow");
   const image =
     preferences.scene === "none"
       ? null
@@ -141,6 +191,8 @@ function applyPreferences() {
         : scene.image;
   root.style.setProperty("--scene-image", image ? `url("${image}")` : "none");
   root.style.setProperty("--scene-opacity", String(preferences.opacity / 100));
+  root.style.setProperty("--reading-opacity", String((100 - preferences.readingTransparency) / 100));
+  root.style.setProperty("--scene-play-state", motionEnabled() ? "running" : "paused");
   root.style.setProperty("--scene-position", scene.position || "center 51%");
   root.style.setProperty("--page-base", scene.base);
   root.style.setProperty("--accent", scene.accent);
@@ -154,6 +206,8 @@ function applyPreferences() {
     String(preferences.lineHeight),
   );
   root.dataset.scene = preferences.scene;
+  root.dataset.motion = motionEnabled() ? "on" : "off";
+  root.dataset.motionPreference = preferences.motion;
 }
 
 function emitChange() {
@@ -165,7 +219,8 @@ function emitChange() {
 }
 
 export function getAppearance() {
-  return { ...preferences, hasCustomPhoto: Boolean(customPhotoURL) };
+  initializeMotion();
+  return { ...preferences, hasCustomPhoto: Boolean(customPhotoURL), motionEnabled: motionEnabled() };
 }
 
 export function setAppearance(changes, { persist = true } = {}) {
@@ -213,6 +268,8 @@ export function initAppearance() {
     emitChange();
     return getAppearance();
   })();
+  // Built-in themes can render immediately; restoring a local photo may wait on storage.
+  emitChange();
   return initializePromise;
 }
 
@@ -303,31 +360,38 @@ export function mountAppearance(
   const abort = new AbortController();
   const listen = (node, type, handler) =>
     node.addEventListener(type, handler, { signal: abort.signal });
+  const sceneCard = (scene) => `<button type="button" class="appearance-scene" data-scene="${scene.id}" aria-pressed="false"><span class="appearance-scene-image" style="--card-image:url('${scene.image}');--card-base:${scene.base};--card-position:${scene.position || "center 51%"}"><span class="appearance-scene-check" aria-hidden="true">✓</span></span><span class="appearance-scene-name">${scene.name}</span></button>`;
   container.classList.add("appearance-panel");
   container.innerHTML = `
-    <header class="appearance-intro"><span class="appearance-eyebrow">YOUR READING SPACE</span><h2>心地よく、読む。</h2><p>景色と文字を、あなたの好みに。</p></header>
-    <fieldset class="appearance-section"><legend>窓の向こうの景色</legend><div class="appearance-scenes">
-      ${SCENES.map((scene) => `<button type="button" class="appearance-scene" data-scene="${scene.id}" aria-pressed="false"><span class="appearance-scene-image" style="background-image:url('${scene.image}')"><span class="appearance-scene-check" aria-hidden="true">✓</span></span><span class="appearance-scene-name">${scene.name}</span><span class="appearance-scene-description">${scene.subtitle}</span></button>`).join("")}
-    </div><div class="appearance-photo-actions"><button type="button" class="appearance-photo-button" data-upload><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.3"/><path d="m3 17 5-5 4 4 4-6 5 7"/></svg>好きな写真を選ぶ</button><input data-photo-file type="file" accept="image/jpeg,image/png,image/webp,image/avif" hidden><button class="appearance-text-button" type="button" data-use-custom hidden>自分の写真にする</button><button class="appearance-text-button" type="button" data-remove-custom hidden>写真を削除</button><button class="appearance-text-button" type="button" data-no-scene>背景なし</button></div><p class="appearance-help">選んだ写真はこの端末にだけ保存されます。</p></fieldset>
-    <section class="appearance-section appearance-slider-group"><label for="${id}-opacity"><span>背景の濃さ</span><output data-opacity-value></output></label><input id="${id}-opacity" type="range" min="0" max="100" step="1" data-setting="opacity"><div class="appearance-range-captions"><span>ほのかに</span><span>鮮やかに</span></div></section>
-    <fieldset class="appearance-section"><legend>読むときの書体</legend><div class="appearance-fonts">${READING_FONTS.map((font) => `<button type="button" data-font="${font.id}" aria-pressed="false"><span class="appearance-font-sample" style="font-family:${font.family.replaceAll('"', "&quot;")}">あ Aa</span><span>${font.name}</span></button>`).join("")}</div></fieldset>
+    <fieldset class="appearance-section"><legend>背景</legend><div class="appearance-scenes appearance-scenes-current">${SCENES.filter(scene => !scene.legacy).map(sceneCard).join("")}</div>
+      <details class="appearance-legacy" data-legacy-scenes><summary>写真・これまでの背景</summary><div class="appearance-scenes">${SCENES.filter(scene => scene.legacy).map(sceneCard).join("")}<button type="button" class="appearance-scene" data-scene="custom" data-custom-card aria-pressed="false" hidden><span class="appearance-scene-image" data-custom-image><span class="appearance-scene-check" aria-hidden="true">✓</span></span><span class="appearance-scene-name">自分の写真</span></button></div>
+      <div class="appearance-photo-actions"><button type="button" class="appearance-photo-button" data-upload><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.3"/><path d="m3 17 5-5 4 4 4-6 5 7"/></svg><span data-upload-label>写真を選ぶ</span></button><input data-photo-file type="file" accept="image/jpeg,image/png,image/webp,image/avif" hidden><button class="appearance-text-button" type="button" data-remove-custom hidden>写真を削除</button></div><p class="appearance-help">写真はこの端末にだけ保存します。</p></details>
+      <button class="appearance-text-button appearance-none" type="button" data-no-scene aria-pressed="false">背景なし</button></fieldset>
+    <div class="appearance-surface-sliders"><section class="appearance-slider-group"><label for="${id}-opacity"><span>背景の濃さ</span><output data-opacity-value></output></label><input id="${id}-opacity" type="range" min="0" max="100" step="1" data-setting="opacity"><div class="appearance-range-captions"><span>なし</span><span>濃く</span></div></section><section class="appearance-slider-group"><label for="${id}-transparency"><span>読書面の透明度</span><output data-transparency-value></output></label><input id="${id}-transparency" type="range" min="0" max="100" step="1" data-setting="readingTransparency"><div class="appearance-range-captions"><span>不透明</span><span>透明</span></div></section></div>
+    <fieldset class="appearance-section"><legend>動き</legend><div class="appearance-motion"><button type="button" data-motion="auto" aria-pressed="false">端末に合わせる</button><button type="button" data-motion="on" aria-pressed="false">動かす</button><button type="button" data-motion="off" aria-pressed="false">止める</button></div></fieldset>
+    <fieldset class="appearance-section"><legend>書体</legend><div class="appearance-fonts">${READING_FONTS.map((font) => `<button type="button" data-font="${font.id}" aria-pressed="false"><span class="appearance-font-sample" style="font-family:${font.family.replaceAll('"', "&quot;")}">あ Aa</span><span>${font.name}</span></button>`).join("")}</div></fieldset>
     <div class="appearance-type-sliders"><section class="appearance-slider-group"><label for="${id}-size"><span>文字サイズ</span><output data-size-value></output></label><input id="${id}-size" type="range" min="16" max="28" step="1" data-setting="fontSize"></section><section class="appearance-slider-group"><label for="${id}-leading"><span>行のゆとり</span><output data-leading-value></output></label><input id="${id}-leading" type="range" min="1.5" max="2.5" step="0.05" data-setting="lineHeight"></section></div>
-    <div class="appearance-reading-preview"><span class="appearance-preview-label">READING PREVIEW</span><p>言葉の向こうに、<br>まだ知らない世界がある。</p><p lang="en">A quiet space for a new perspective.</p></div>
-    <footer class="appearance-footer"><p>設定は、このブラウザーに保存されます。</p><button type="button" class="appearance-text-button" data-reset>初期設定に戻す</button></footer><p class="appearance-feedback" role="status" aria-live="polite" data-feedback></p>`;
+    <div class="appearance-reading-preview" aria-label="読みやすさのプレビュー"><div class="appearance-preview-pane appearance-preview-source"><span class="appearance-preview-label">原文</span><p lang="en">A quiet moment, a clearer view.</p></div><div class="appearance-preview-pane appearance-preview-target"><span class="appearance-preview-label">訳文</span><p lang="ja">少し落ち着くと、よく見えてくる。</p></div></div>
+    <footer class="appearance-footer"><span>このブラウザーに保存</span><button type="button" class="appearance-text-button" data-reset>初期設定に戻す</button></footer><p class="appearance-feedback" role="status" aria-live="polite" data-feedback></p>`;
 
   const feedback = (message) => {
     container.querySelector("[data-feedback]").textContent = message;
     notify(message);
   };
+  let displayedScene;
+  let alive = true;
   const update = (state) => {
     container
-      .querySelectorAll("[data-scene]")
+      .querySelectorAll("button[data-scene]")
       .forEach((button) =>
         button.setAttribute(
           "aria-pressed",
           String(button.dataset.scene === state.scene),
         ),
       );
+    container.querySelectorAll("button[data-motion]").forEach(button =>
+      button.setAttribute("aria-pressed", String(button.dataset.motion === state.motion)),
+    );
     container
       .querySelectorAll("[data-font]")
       .forEach((button) =>
@@ -341,14 +405,22 @@ export function mountAppearance(
     });
     container.querySelector("[data-opacity-value]").textContent =
       `${state.opacity}%`;
+    container.querySelector("[data-transparency-value]").textContent =
+      `${state.readingTransparency}%`;
     container.querySelector("[data-size-value]").textContent =
       `${state.fontSize}px`;
     container.querySelector("[data-leading-value]").textContent =
       state.lineHeight.toFixed(2);
-    container.querySelector("[data-use-custom]").hidden =
-      !state.hasCustomPhoto || state.scene === "custom";
+    container.querySelector("[data-custom-card]").hidden = !state.hasCustomPhoto;
+    const customImage = container.querySelector("[data-custom-image]");
+    customImage.style.setProperty("--card-image", customPhotoURL ? `url("${customPhotoURL}")` : "none");
+    customImage.style.setProperty("--card-base", SCENES.find(scene => scene.id === "alpenglow").base);
+    container.querySelector("[data-upload-label]").textContent = state.hasCustomPhoto ? "写真を変更" : "写真を選ぶ";
     container.querySelector("[data-remove-custom]").hidden =
       !state.hasCustomPhoto;
+    if (displayedScene !== state.scene && (state.scene === "custom" || SCENES.some(scene => scene.id === state.scene && scene.legacy)))
+      container.querySelector("[data-legacy-scenes]").open = true;
+    displayedScene = state.scene;
     container
       .querySelector("[data-no-scene]")
       .setAttribute("aria-pressed", String(state.scene === "none"));
@@ -363,10 +435,13 @@ export function mountAppearance(
       );
   };
   container
-    .querySelectorAll("[data-scene]")
+    .querySelectorAll("button[data-scene]")
     .forEach((button) =>
       listen(button, "click", () => change({ scene: button.dataset.scene })),
     );
+  container.querySelectorAll("button[data-motion]").forEach(button =>
+    listen(button, "click", () => change({ motion: button.dataset.motion })),
+  );
   container
     .querySelectorAll("[data-font]")
     .forEach((button) =>
@@ -402,9 +477,6 @@ export function mountAppearance(
       fileInput.value = "";
     }
   });
-  listen(container.querySelector("[data-use-custom]"), "click", () =>
-    change({ scene: "custom" }),
-  );
   listen(container.querySelector("[data-no-scene]"), "click", () =>
     change({ scene: "none" }),
   );
@@ -421,10 +493,11 @@ export function mountAppearance(
     feedback("外観を初期設定に戻しました。");
   });
   update(getAppearance());
-  initAppearance().then(update);
+  initAppearance().then(state => { if (alive) update(state); });
   return {
     update: () => update(getAppearance()),
     destroy() {
+      alive = false;
       abort.abort();
       subscribers.delete(update);
     },

@@ -27,3 +27,9 @@ respective rights holders.
 App icons: icon-192.png and icon-512.png are raster versions of the project's
 original mark.svg. They follow the same license as mark.svg and the application,
 not the separate CC0 dedication for the three landscape illustrations above.
+
+The atmosphere/ directory contains original AI-assisted illustrations for
+花霞 (cherry blossoms), 燕の空 (swallows), and 陽だまり (sunlit flowers),
+their theme previews and a procedurally generated paper grain tile.
+These bundled images are also dedicated under CC0 1.0 Universal as described
+above. Theme compositions are defined in atmosphere.js and atmosphere.css.

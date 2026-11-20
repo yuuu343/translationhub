@@ -8,6 +8,7 @@ import {
 } from "./documents.js";
 import { installAlignment } from "./alignment.js";
 import { initAppearance, mountAppearance } from "./appearance.js";
+import { initAtmosphere } from "./atmosphere.js";
 import { initTextSizing } from "./text-size.js";
 import { prepareTextJob, translateTextUnit } from "./text-job.js";
 import {
@@ -732,6 +733,7 @@ window.addEventListener("beforeunload", (e) => {
 });
 updateLangOptions();
 icons();
+initAtmosphere();
 initAppearance().catch(() => {});
 subscribeEngineStatus((state) => {
   if (activeJob && /取得中|準備しています/.test(state.status))
