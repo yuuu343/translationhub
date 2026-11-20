@@ -194,7 +194,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
-        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://huggingface.co https://*.huggingface.co https://*.hf.co; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://translation.googleapis.com https://huggingface.co https://*.huggingface.co https://*.hf.co; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
         super().end_headers()
 
     def valid_host(self):
@@ -390,10 +390,16 @@ class Handler(SimpleHTTPRequestHandler):
             if info.get('remote_host') or info.get('remote_model'):
                 raise ValueError('クラウドモデルへの送信はローカル接続では許可されていません。')
             messages = data.get('messages')
-            if (not isinstance(messages, list) or not 1 <= len(messages) <= 3 or
+            if (not isinstance(messages, list) or not 1 <= len(messages) <= 4 or
                 any(not isinstance(m, dict) or m.get('role') not in {'system', 'user', 'assistant'} or
                     not isinstance(m.get('content'), str) for m in messages)):
                 raise ValueError('Invalid messages')
+            if len(messages) == 4 and (
+                data.get('profile') != 'plamo' or
+                [m['role'] for m in messages] != ['system', 'user', 'assistant', 'user'] or
+                any(len(m['content']) > 640 for m in messages[1:3])
+            ):
+                raise ValueError('Invalid paragraph history')
             options = ollama_options(info, messages, data.get('profile'))
             result = self.request_json(endpoint + '/api/chat', {
                 'model': model, 'messages': messages, 'stream': False, 'truncate': False, 'shift': False,

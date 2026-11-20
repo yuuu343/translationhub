@@ -8,6 +8,9 @@ test("monetary scales compare exactly across English and Japanese notation", () 
     ["$1.84 billion", "18億4000万ドル"],
     ["USD 1.84 billion", "18.4億米ドル"],
     ["JPY 12.5 billion", "125億円"],
+    ["JPY 340 million", "3 億 4000 万円"],
+    ["USD 18.6 million", "1,860 万米ドル"],
+    ["JPY 12.5 billion", "125\u00a0億\u3000円"],
     ["JPY 12,500,000,000", "125億円"],
     ["$120 million", "1億2,000万ドル"],
     ["$95 million", "95百万ドル"],
@@ -30,6 +33,8 @@ test("currency countries and financial units are not guessed", () => {
   assert.notEqual(key("0.6 percentage points"), key("0.6%"));
   assert.notEqual(key("0.6 basis points"), key("0.6 percentage points"));
   assert.equal(key("0.6 percentage points"), key("0.6パーセントポイント"));
+  assert.equal(key("0.6 percentage points"), key("0.6 パーセント ポイント"));
+  assert.equal(key("0.6 basis points"), key("0.6 ベーシス ポイント"));
   assert.equal(key("7.50 percent"), key("7.5%"));
 });
 

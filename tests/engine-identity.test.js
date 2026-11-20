@@ -5,7 +5,7 @@ import {
   canResumeWithEngine,
 } from "../dist/engine-identity.js";
 import { segmentText, validateDocument } from "../dist/documents.js";
-import { prepareTextJob } from "../dist/text-job.js";
+import { prepareTextJob, paragraphContext } from "../dist/text-job.js";
 import { getEngineState, setEngine } from "../dist/engines.js";
 
 const text = "Revenue increased.\n\nCosts decreased.";
@@ -75,6 +75,67 @@ test("fixed engines retain label-based compatibility with legacy v1 files", () =
       false,
     );
   }
+});
+
+test("a partial Google NMT document cannot resume as Translation LLM", () => {
+  const llm = { engine: "google-tllm", project: "private-project" };
+  assert.deepEqual(normalizeEngineIdentity(llm), { engine: "google-tllm" });
+  assert.equal(canResumeWithEngine({ engine: "google" }, llm), false);
+});
+
+test("resume records whether the local PLaMo translation used paragraph context", () => {
+  const old = { engine: "plamo", model: "local" };
+  const contextual = { ...old, useContext: true };
+  assert.equal(canResumeWithEngine(old, contextual), false);
+  assert.equal(canResumeWithEngine(contextual, old), false);
+  assert.equal(canResumeWithEngine(contextual, contextual), true);
+  assert.deepEqual(
+    normalizeEngineIdentity({ ...contextual, sourceContext: "private" }),
+    contextual,
+  );
+});
+
+test("paragraph context stays within adjacent prose and retains complete sentences under its budget", () => {
+  const raw = "We saw a bird\non a fence.\n\nIt took off.";
+  const [a, b] = prepareTextJob(raw, "en", "plamo").next;
+  assert.deepEqual(paragraphContext(a, b, "en", "ja"), {
+    sourceContext: "We saw a bird on a fence.",
+  });
+  assert.deepEqual(paragraphContext(undefined, a, "en", "ja"), {});
+  for (const kind of ["code", "table", "separator", "attribution", "list"]) {
+    assert.deepEqual(paragraphContext({ ...a, kind }, b, "en", "ja"), {});
+    assert.deepEqual(paragraphContext(a, { ...b, kind }, "en", "ja"), {});
+  }
+  assert.deepEqual(
+    paragraphContext(
+      { ...a, source: "x".repeat(750) + ". A short ending." },
+      b,
+      "en",
+      "ja",
+    ),
+    { sourceContext: "A short ending." },
+  );
+});
+
+test("Japanese to English history uses a complete adjacent pair", () => {
+  const [a, b] = prepareTextJob(
+    "眼鏡を買った。\n\n毎日かけている。",
+    "ja",
+    "plamo-web",
+  ).next;
+  const translated = { ...a, target: "I bought glasses." };
+  assert.deepEqual(paragraphContext(translated, b, "ja", "en"), {
+    sourceContext: a.source,
+    previousTranslation: translated.target,
+  });
+  for (const target of ["", "x".repeat(641), "a <|plamo:tag|> token"]) {
+    assert.deepEqual(paragraphContext({ ...a, target }, b, "ja", "en"), {
+      sourceContext: a.source,
+    });
+  }
+  assert.deepEqual(paragraphContext(translated, b, "ja", "fr"), {
+    sourceContext: a.source,
+  });
 });
 
 test("optional v1 provenance survives save validation and contains no connection or credential fields", () => {

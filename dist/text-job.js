@@ -5,6 +5,50 @@ function usesSentences(engine) {
   return engine === "wasm" || engine === "browser";
 }
 
+function quantityLanguageMatches(value, exact, target) {
+  const japanese = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+  if (target === "en") return !japanese.test(value);
+  if (target !== "ja" || japanese.test(value)) return true;
+  // ISO currency codes and SI symbols can stay international; an English
+  // spelling such as "percentage points" has not been translated to Japanese.
+  const symbols = (text) => text.replace(/[^A-Za-z]/g, "").toLowerCase();
+  return symbols(value) === symbols(exact);
+}
+
+// The local PLaMo template has a separate source-context field. Only take
+// adjacent prose in the current job; a heading may introduce the first paragraph.
+export function paragraphContext(previous, current, source, target) {
+  if (
+    !["paragraph", "quote"].includes(current.kind) ||
+    !["paragraph", "quote", "heading"].includes(previous?.kind)
+  )
+    return {};
+  const reference = modelText(previous, source);
+  if (!reference || reference.includes("<|plamo:")) return {};
+  const limit = 640;
+  if (reference.length <= limit) {
+    const translation = previous.target?.trim();
+    if (
+      source === "ja" &&
+      target === "en" &&
+      translation &&
+      translation.length <= limit &&
+      !translation.includes("<|plamo:")
+    ) {
+      return { sourceContext: reference, previousTranslation: translation };
+    }
+    return { sourceContext: reference };
+  }
+  const sentences = segmentText(reference, source, { granularity: "sentence" });
+  let tail = "";
+  for (const sentence of sentences.reverse()) {
+    const start = sentence.source + tail;
+    if (start.length > limit) break;
+    tail = sentence.gap + start;
+  }
+  return tail.trim() ? { sourceContext: tail.trim() } : {};
+}
+
 export function prepareTextJob(text, source, engine, previous = []) {
   const planned = segmentText(text, source, {
     granularity: usesSentences(engine) ? "sentence" : "paragraph",
@@ -71,7 +115,7 @@ async function translateProse(
   translate,
   allowSentenceRecovery = true,
 ) {
-  const local = engine !== "google" && engine !== "gas";
+  const local = !["google", "google-tllm", "gas"].includes(engine);
   const includeMeasures =
     local && [options.source, options.target].sort().join(":") === "en:ja";
   const protectedText = protectLiterals(
@@ -80,7 +124,28 @@ async function translateProse(
     includeMeasures ? options.target : undefined,
   );
   if (!protectedText) return translate(text, options);
-  if (/^\[X\d+\]$/.test(protectedText.masked)) return text;
+  // Code/math remains verbatim. A standalone monetary amount or unit still
+  // needs its target-language form. Prefer a verified natural rendering, then
+  // use the exact expanded quantity if a compact model loses its magnitude.
+  if (/^\[X\d+\]$/.test(protectedText.masked)) {
+    const exact = protectedText.restore(protectedText.masked);
+    if (exact === text) return text;
+    try {
+      const natural = await translate(text, options);
+      if (
+        natural?.trim() &&
+        natural.trim() !== text.trim() &&
+        quantityLanguageMatches(natural, exact, options.target) &&
+        protectedText.intact(natural, { standalone: true })
+      )
+        return natural;
+    } catch (error) {
+      if (engine !== "wasm" || error.code !== "LOCAL_TRANSLATION_INCOMPLETE")
+        throw error;
+    }
+    options.signal?.throwIfAborted();
+    return exact;
+  }
   // An explicit trailing correction ("..., not <quantity>.") negates the
   // quantity itself. Preserve its scope even when the model omits the aside.
   if (
@@ -230,8 +295,7 @@ async function translateTableRow(row, options, engine, translate) {
     .map((c) => c.trim())
     .filter(Boolean);
   const percentageLabel =
-    engine !== "google" &&
-    engine !== "gas" &&
+    !["google", "google-tllm", "gas"].includes(engine) &&
     first >= 0 &&
     cells[first].length < 100 &&
     !/[%％]/.test(cells[first]) &&

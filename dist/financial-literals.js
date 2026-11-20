@@ -2,7 +2,8 @@
 // Decimal-dot / comma-thousands notation is accepted; ambiguous decimal-comma,
 // shared-unit ranges and unspecified currency countries are never inferred.
 const number = String.raw`(?:\d{1,3}(?:,\d{3}){1,9}|\d{1,30})(?:\.\d{1,18})?`;
-const japanese = String.raw`(?:${number}(?:兆|億|千万|百万|十万|万|千|百)){1,10}(?:${number})?`;
+const horizontalSpace = String.raw`[ \t\u00a0\u3000]*`;
+const japanese = String.raw`(?:${number}${horizontalSpace}(?:兆|億|千万|百万|十万|万|千|百)${horizontalSpace}){1,10}(?:${number})?`;
 const amount = `(?:${japanese}|${number})`;
 const scale = String.raw`(?:\s*(?<scale>trillion|billion|million|thousand)\b)?`;
 const currencyCodes = "USD|JPY|EUR|GBP|CNY|CAD|AUD|NZD|HKD|SGD";
@@ -21,7 +22,7 @@ const suffixMoney = new RegExp(
   "giu",
 );
 const rates = new RegExp(
-  `${begin}${comparison}${sign}(?<amount>${number})\\s*(?<unit>percentage\\s+points?|percent\\s+points?|パーセントポイント|%ポイント|basis\\s+points?|ベーシスポイント|percent|per\\s+cent|パーセント|%)(?![A-Za-z])${tail}`,
+  `${begin}${comparison}${sign}(?<amount>${number})\\s*(?<unit>percentage\\s+points?|percent\\s+points?|パーセント${horizontalSpace}ポイント|%${horizontalSpace}ポイント|basis\\s+points?|ベーシス${horizontalSpace}ポイント|percent|per\\s+cent|パーセント|%)(?![A-Za-z])${tail}`,
   "giu",
 );
 const adjacentCurrencyBefore = new RegExp(`(?:${prefix})\\s*$`, "iu");
@@ -63,6 +64,7 @@ function add(a, b) {
   };
 }
 function numericValue(raw, englishScale) {
+  raw = raw.replace(/[ \t\u00a0\u3000]/g, "");
   if (/[兆億万千百]/.test(raw)) {
     if (englishScale) return null;
     const parts = new RegExp(
@@ -253,7 +255,7 @@ export function financialLiterals(text, targetLanguage = "en") {
       const denomination =
         kind === "money"
           ? currency(g.currency)
-          : /percentage|percent\s+point|パーセントポイント|%ポイント/i.test(
+          : /percentage|percent\s+point|パーセント\s*ポイント|%\s*ポイント/i.test(
                 g.unit,
               )
             ? "percentage-point"

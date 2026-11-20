@@ -1,0 +1,154 @@
+[
+  {
+    "file": "WLLAMA-NOTICE.txt",
+    "title": "wllama",
+    "source": "https://raw.githubusercontent.com/ngxson/wllama/6647c1ea3837b2f0205a300c3bf5ff644aaa06bf/package.json",
+    "sha256": "bcdb83bbaa43a75a2ee4fc881caaf09a8244b9944109c4393332e330d60fc313",
+    "bytes": 1560,
+    "extracted": "package declaration and author; standard MIT terms accompanying upstream declaration"
+  },
+  {
+    "file": "LLAMA-CPP-LICENSE.txt",
+    "title": "llama.cpp and ggml",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/LICENSE",
+    "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+    "bytes": 1078,
+    "extracted": false
+  },
+  {
+    "file": "JSONHPP-LICENSE.txt",
+    "title": "nlohmann/json",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/licenses/LICENSE-jsonhpp",
+    "sha256": "c0d068392ea65358b798b8c165103560f06e9e3b38c4ab4e2d8810a7b931af86",
+    "bytes": 1075,
+    "extracted": false
+  },
+  {
+    "file": "XXHASH-LICENSE.txt",
+    "title": "xxHash",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/vendor/hash/xxhash/LICENSE",
+    "sha256": "6ffedbc0f7878612d2b23589f1ff2ab15633e1df7963a5d9fc750ec5500c7e7a",
+    "bytes": 1389,
+    "extracted": false
+  },
+  {
+    "file": "ROTATE-BITS-LICENSE.txt",
+    "title": "rotate-bits",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/vendor/hash/rotate-bits/LICENSE.md",
+    "sha256": "ca0b44aec101afb6b46f4c39b23369fa06a64fb9c0add37c2689d702156fee55",
+    "bytes": 1088,
+    "extracted": false
+  },
+  {
+    "file": "SHA256-LICENSE.txt",
+    "title": "SHA-256",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/vendor/hash/sha256/LICENSE",
+    "sha256": "b81d0022ca6367918c67b57e9647d3513ee58809fd4b0ef0b3492f1356bced25",
+    "bytes": 41,
+    "extracted": false
+  },
+  {
+    "file": "SHA1-NOTICE.txt",
+    "title": "SHA-1",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/vendor/hash/sha1/sha1.c",
+    "sha256": "77bc62a94fcec83aed989da4ab0970816a8dd748a5500f2fb069cd109a73f42d",
+    "bytes": 340,
+    "extracted": true
+  },
+  {
+    "file": "STB-IMAGE-LICENSE.txt",
+    "title": "stb_image",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/vendor/stb/stb_image.h",
+    "sha256": "7587efcca32db8f95bf5860dea6dfa4be410ee723e1964db3689c8ddf2a2e4a9",
+    "bytes": 2674,
+    "extracted": true
+  },
+  {
+    "file": "MINIAUDIO-LICENSE.txt",
+    "title": "miniaudio",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/vendor/miniaudio/miniaudio.h",
+    "sha256": "3a0fd41237bf8341d1e4cdd89a52ff4a96228c4fad26e272840ed0ee03efcaf7",
+    "bytes": 2604,
+    "extracted": true
+  },
+  {
+    "file": "SUBPROCESS-LICENSE.txt",
+    "title": "sheredom/subprocess.h",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/vendor/sheredom/subprocess.h",
+    "sha256": "931b83928546167e6734ecb409f5d3094415f4c2ff69335980bd144d72b7d425",
+    "bytes": 1277,
+    "extracted": true
+  },
+  {
+    "file": "BASE64-LICENSE.txt",
+    "title": "base64.hpp",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/common/base64.hpp",
+    "sha256": "a5e1a235759d6131a1e9e5443a7fa611dc1030dcbb617387ccd037752ee8161a",
+    "bytes": 1216,
+    "extracted": true
+  },
+  {
+    "file": "CPP-HTTPLIB-LICENSE.txt",
+    "title": "cpp-httplib (conditional common dependency; retained conservatively)",
+    "source": "https://raw.githubusercontent.com/ggml-org/llama.cpp/7d7f0287530bc8981690f361d8c1627dbae1c99a/vendor/cpp-httplib/LICENSE",
+    "sha256": "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b",
+    "bytes": 1075,
+    "extracted": false
+  },
+  {
+    "file": "EMSCRIPTEN-LICENSE.txt",
+    "title": "Emscripten",
+    "source": "https://raw.githubusercontent.com/emscripten-core/emscripten/4.0.20/LICENSE",
+    "sha256": "620a78084fc7ca97c0b5dea9abf891f3ffcadfdbf305276f099c9c4e12fc1d86",
+    "bytes": 5093,
+    "extracted": false
+  },
+  {
+    "file": "MUSL-COPYRIGHT.txt",
+    "title": "musl and bundled component notices",
+    "source": "https://raw.githubusercontent.com/emscripten-core/emscripten/4.0.20/system/lib/libc/musl/COPYRIGHT",
+    "sha256": "f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af",
+    "bytes": 6204,
+    "extracted": false
+  },
+  {
+    "file": "LIBCXX-LICENSE.txt",
+    "title": "LLVM libc++",
+    "source": "https://raw.githubusercontent.com/emscripten-core/emscripten/4.0.20/system/lib/libcxx/LICENSE.TXT",
+    "sha256": "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b",
+    "bytes": 16703,
+    "extracted": false
+  },
+  {
+    "file": "LIBCXXABI-LICENSE.txt",
+    "title": "LLVM libc++abi",
+    "source": "https://raw.githubusercontent.com/emscripten-core/emscripten/4.0.20/system/lib/libcxxabi/LICENSE.TXT",
+    "sha256": "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c",
+    "bytes": 16706,
+    "extracted": false
+  },
+  {
+    "file": "COMPILER-RT-LICENSE.txt",
+    "title": "LLVM compiler-rt",
+    "source": "https://raw.githubusercontent.com/emscripten-core/emscripten/4.0.20/system/lib/compiler-rt/LICENSE.TXT",
+    "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d",
+    "bytes": 16708,
+    "extracted": false
+  },
+  {
+    "file": "PLAMO-LICENSE-en.txt",
+    "title": "PLaMo Community License (English)",
+    "source": "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/raw/7de4409f84a9d70e3a5e87b81e84883d49f77b58/LICENSE/en",
+    "sha256": "0a91796807d0f1641a0543f2ace9a973190d3acd71a6336251988af410d6c2f7",
+    "bytes": 14585,
+    "extracted": false
+  },
+  {
+    "file": "PLAMO-LICENSE-ja.txt",
+    "title": "PLaMo Community License (Japanese)",
+    "source": "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/raw/7de4409f84a9d70e3a5e87b81e84883d49f77b58/LICENSE/ja",
+    "sha256": "835e967f5a744c4a337e474f9f23a4cb879a6ac442fcc3e3a557df07d561c68a",
+    "bytes": 15669,
+    "extracted": false
+  }
+]

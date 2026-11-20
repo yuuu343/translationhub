@@ -4,15 +4,22 @@ const engines = new Set([
   "browser",
   "wasm",
   "plamo",
+  "plamo-web",
   "gemma",
   "ollama",
   "google",
+  "google-tllm",
   "gas",
 ]);
 const configurableModels = new Set(["plamo", "gemma", "ollama"]);
 
 export function normalizeEngineIdentity(value) {
   if (!value || !engines.has(value.engine)) return undefined;
+  if (value.engine === "plamo-web")
+    return {
+      engine: value.engine,
+      ...(value.useContext === true ? { useContext: true } : {}),
+    };
   if (!configurableModels.has(value.engine)) return { engine: value.engine };
   const model = typeof value.model === "string" ? value.model.trim() : "";
   if (
@@ -20,7 +27,13 @@ export function normalizeEngineIdentity(value) {
     /^[a-z]+:\/\//i.test(model)
   )
     return undefined;
-  return { engine: value.engine, model };
+  return {
+    engine: value.engine,
+    model,
+    ...(value.engine === "plamo" && value.useContext === true
+      ? { useContext: true }
+      : {}),
+  };
 }
 
 export function canResumeWithEngine(previous, current, legacyLabel = "") {
@@ -28,7 +41,11 @@ export function canResumeWithEngine(previous, current, legacyLabel = "") {
   if (!selected) return false;
   const saved = normalizeEngineIdentity(previous);
   if (saved)
-    return saved.engine === selected.engine && saved.model === selected.model;
+    return (
+      saved.engine === selected.engine &&
+      saved.model === selected.model &&
+      saved.useContext === selected.useContext
+    );
   // Old v1 files did not record a configurable Ollama model. Its identity cannot
   // be recovered from a display label, so begin a fresh job for those files.
   return (

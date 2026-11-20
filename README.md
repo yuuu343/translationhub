@@ -8,9 +8,11 @@
 
 ## 文章を翻訳する
 
-原文と訳文の言語を選び、文章を貼り付けて「翻訳する」を押します。エンジン名から接続先を変更できます。英日・日英は「軽量ローカル」でAPIキーなしで利用できます。初回に言語モデルを取得するので、設定でダウンロードを許可して「接続・モデルを確認」を押してください。所要時間とメモリ量は端末によって変わります。
+原文と訳文の言語を選び、文章を貼り付けて「翻訳する」を押します。翻訳欄のエンジン名を押すと、使うモデルとデータの送信先を確認・変更できます。[Google翻訳との比較で使った原文と実際の訳文](https://translationhub.waxyghost64.chatgpt.site/quality/index.html)
 
-画面の文字認識（Windowsの `Win + Shift + T` など）から直接貼り付けられます。本文の途中にある折り返しをつなぎ、空行で区切られた段落や箇条書きは区別します。軽量ローカルとブラウザー内蔵には完結した文を、PLaMoなどのエンジンには段落を渡します。非常に長い段落は分割します。原文と保存ファイルには、貼り付けたときの改行が残ります。
+英日・日英の文章では、対応ブラウザーで「PLaMo 3 Translate · ブラウザー」が初期選択になります。最初の翻訳時に利用条件を確認して約573 MBのモデルを取得すると、OllamaやAPIキーを用意せずに端末内で翻訳できます。初回ダイアログから他のエンジンも選べます。PLaMoは同じ文書の直前の段落を参照します。日英翻訳では、直前の原文と訳文がともに短い場合に対訳も参照します。段落の参照は設定で切り替えられます。Built with PLaMo. [モデルの利用条件](dist/vendor/plamo/PLAMO-LICENSE-ja.txt)
+
+画面の文字認識（Windowsの `Win + Shift + T` など）から直接貼り付けられます。本文の途中にある折り返しをつなぎ、空行で区切られた段落や箇条書きは区別します。軽量ローカルとブラウザー内蔵には完結した文を、ブラウザー版PLaMoやOllamaなどのエンジンには段落を渡します。非常に長い段落は分割します。原文と保存ファイルには、貼り付けたときの改行が残ります。
 
 タブ区切りの表やMarkdown表では行・列・数値セルの位置を保持します。ローカルの英日・日英翻訳では、認識できる測定値、通貨と桁、百分率などを原文と照合します。訳で値が変わった場合は、対応する値を記号に置き換えて再翻訳し、返答中の各記号を検査してから値を戻します。式やコードの綴りも照合対象です。[検証した文章と結果](docs/translation-quality.md)
 
@@ -43,12 +45,14 @@ EasyReadを使っている場合、ローカル版から明示的にPDFを端末
 | エンジン | 接続とデータの行き先 |
 | --- | --- |
 | ブラウザー内蔵 | ブラウザーが対象言語のTranslator APIを提供する場合に利用できます。言語データの取得後は端末内で処理します。 |
+| PLaMo 3 Translate · ブラウザー | 許可するとPFNの固定版の重みをHugging Faceから端末へ取得します。本文や対訳の外部送信はありません。ブラウザーの対応機能と空き容量が必要です。 |
 | 軽量ローカル | 初回にHugging Faceから該当言語の重みを取得し、ブラウザーにキャッシュします。英日にはFuguMT、日英にはOPUS-MTを使います。原文は端末内のWeb Workerで処理します。 |
 | PLaMo 3 Translate・TranslateGemma・その他のOllamaモデル | Ollamaに対象モデルを用意し、アプリで名前を選択します。モデルの利用条件は各配布元に従います。 |
 | Google Cloud Translation | 利用者自身のBasic v2 APIキーを設定し、Googleへの送信を許可します。Googleの利用料はそのキーの契約に帰属します。 |
+| Google Cloud · Translation LLM | Googleの翻訳専用LLMを使う場合は、Basic v2のキーとプロジェクトIDまたは番号を設定します。原文と訳文の文字数に応じてご自身のプロジェクトにLLM料金がかかります。[モデル仕様](https://docs.cloud.google.com/translate/docs/translation-llm)・[料金表](https://cloud.google.com/translate/pricing) |
 | Google Apps Script | 同梱の `integrations/google-apps-script.gs` を自分のWebアプリとして設定し、接続先とシークレットを入力します。Googleの割当と処理条件が適用されます。 |
 
-Ollama・Google Cloud・Apps Scriptの接続には同梱のローカルサーバーを使います。ローカル版では同じ画面から接続できます。公開Web版から接続する場合は `python server.py --allow-origin https://translationhub.waxyghost64.chatgpt.site` で該当サイトだけを許可してください。ブラウザーによってはローカルネットワークへのアクセス許可が必要です。端末内サーバーを外部へ公開する必要はありません。
+Google Cloud · Translation LLMはブラウザーからGoogleへ直接接続します。Ollama・Google Cloudの標準NMT・Apps Scriptの接続には同梱のローカルサーバーを使います。ローカル版では同じ画面から接続できます。公開Web版から接続する場合は `python server.py --allow-origin https://translationhub.waxyghost64.chatgpt.site` で該当サイトだけを許可してください。ブラウザーによってはローカルネットワークへのアクセス許可が必要です。端末内サーバーを外部へ公開する必要はありません。
 
 ### 手元のPLaMoで読む
 

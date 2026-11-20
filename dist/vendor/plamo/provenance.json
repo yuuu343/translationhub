@@ -1,0 +1,64 @@
+{
+  "runtime": {
+    "package": "@wllama/wllama",
+    "version": "3.13.0",
+    "gitRevision": "6647c1ea3837b2f0205a300c3bf5ff644aaa06bf",
+    "tarball": "https://registry.npmjs.org/@wllama/wllama/-/wllama-3.13.0.tgz",
+    "npmIntegrity": "sha512-ZvoRdQAn+E+18EvQ9qS036gudiI9rbZRBJgG/qNICPPwrA0Y6SMMdbziz/j7K/0WxcbJlhaRraVIYsnEy732NA==",
+    "npmIntegrityVerified": true,
+    "llamaCppRevision": "7d7f0287530bc8981690f361d8c1627dbae1c99a",
+    "llamaCppVersion": "b12211-7d7f028",
+    "emscriptenVersion": "4.0.20",
+    "runtimeFilesModified": false,
+    "mode": "CPU, one thread, no WebGPU and no CDN compatibility fallback"
+  },
+  "model": {
+    "repository": "pfnet/plamo-3-translate-0.8b-GGUF",
+    "revision": "7de4409f84a9d70e3a5e87b81e84883d49f77b58",
+    "filename": "plamo-3-translate-0.8b-Q4_K_M.gguf",
+    "bytes": 573126848,
+    "sha256": "70891ec70dc7ab4205745a38307867c2881b99239f20327927633abfe4bc9ec6",
+    "weightsBundled": false,
+    "license": "PLaMo Community License",
+    "downloadURL": "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/7de4409f84a9d70e3a5e87b81e84883d49f77b58/plamo-3-translate-0.8b-Q4_K_M.gguf",
+    "downloadTrigger": "Explicit prepare/translate after separate model consent in the app",
+    "verification": "Exact byte size and SHA-256 before every load, including OPFS cache reuse"
+  },
+  "files": [
+    {
+      "file": "license-sources.json",
+      "bytes": 6536,
+      "sha256": "b1acfa3bbb17b48e67ec24f76005b74c0a65e2b33e724670f5cc611027bea45a"
+    },
+    {
+      "file": "PLAMO-LICENSE-en.txt",
+      "bytes": 14585,
+      "sha256": "0a91796807d0f1641a0543f2ace9a973190d3acd71a6336251988af410d6c2f7"
+    },
+    {
+      "file": "PLAMO-LICENSE-ja.txt",
+      "bytes": 15669,
+      "sha256": "835e967f5a744c4a337e474f9f23a4cb879a6ac442fcc3e3a557df07d561c68a"
+    },
+    {
+      "file": "README.txt",
+      "bytes": 1323,
+      "sha256": "6b6b59585e787fa6c30209c95eabbe18764abc5a8bfc00849656bed4f9c4250e"
+    },
+    {
+      "file": "THIRD-PARTY-NOTICES.txt",
+      "bytes": 84905,
+      "sha256": "5768fd5c4236b5bb7ceef288225454b4a16ed63ea9fa50f3b02f798dd4375ef8"
+    },
+    {
+      "file": "wllama.min.js",
+      "bytes": 219295,
+      "sha256": "e7f3745ee508c111c22d178d23c52cc74016dd8cec39e4600d87e28d287d7981"
+    },
+    {
+      "file": "wllama.wasm",
+      "bytes": 10244628,
+      "sha256": "79ac5be917b71d50571a4f584436a9f6baf6b6e57719d094ed8bd950e9a65780"
+    }
+  ]
+}

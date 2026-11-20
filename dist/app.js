@@ -10,7 +10,11 @@ import { installAlignment } from "./alignment.js";
 import { initAppearance, mountAppearance } from "./appearance.js";
 import { initAtmosphere } from "./atmosphere.js";
 import { initTextSizing } from "./text-size.js";
-import { prepareTextJob, translateTextUnit } from "./text-job.js";
+import {
+  prepareTextJob,
+  paragraphContext,
+  translateTextUnit,
+} from "./text-job.js";
 import {
   normalizeEngineIdentity,
   canResumeWithEngine,
@@ -22,6 +26,10 @@ import {
   getEngineState,
   mountEngines,
   enableLightweight,
+  allowPlamo,
+  plamoLicense,
+  selectDeviceDefault,
+  setEngine,
   subscribeEngineStatus,
 } from "./engines.js";
 import { fundingPage } from "./site-config.js";
@@ -34,6 +42,7 @@ let pdf,
   dialogCleanup,
   toastTimer,
   activeJob,
+  paragraphProgress = "",
   currentId,
   dirty = false,
   editMode = true;
@@ -170,6 +179,12 @@ function renderSegments(pane, field) {
   pane.replaceChildren(frag);
 }
 function controls() {
+  if (!activeJob && !pdfBusy) {
+    const { source, target } = getLanguages();
+    selectDeviceDefault(
+      $("pdf-area").hidden && [source, target].sort().join(":") === "en:ja",
+    );
+  }
   const any = input.value.trim().length > 0,
     hasOutput = segments.some((s) => s.target);
   $("input").hidden = !editMode;
@@ -355,6 +370,39 @@ function localModelChoice(c, langs) {
   );
   c.append(actions);
 }
+function plamoModelChoice(c) {
+  const terms = element("a", "PLaMo Community License（利用条件）");
+  terms.href = plamoLicense;
+  terms.target = "_blank";
+  terms.rel = "noopener noreferrer";
+  const intro = element(
+    "p",
+    "初回に約573 MBのPLaMoモデルを取得し、このブラウザーに保存します。原文・訳文は端末内で処理します。私的利用は登録不要です。業務での利用には事前登録などの条件があります。Built with PLaMo.",
+    "modal-copy",
+  );
+  const actions = element("div", undefined, "modal-actions");
+  actions.append(
+    button(
+      "利用条件に同意して翻訳",
+      () => {
+        allowPlamo();
+        dialog.close();
+        run();
+      },
+      "primary",
+    ),
+  );
+  if (typeof globalThis.Translator !== "undefined")
+    actions.append(
+      button("ブラウザー内蔵で翻訳", () => {
+        setEngine("browser");
+        dialog.close();
+        run();
+      }),
+    );
+  actions.append(button("別のエンジンを選ぶ", openSettings));
+  c.append(intro, terms, actions);
+}
 async function run() {
   if (activeJob) {
     activeJob.abort();
@@ -373,6 +421,10 @@ async function run() {
   const lightweightPair =
       [langs.source, langs.target].sort().join(":") === "en:ja",
     engineState = getEngineState();
+  if (engineState.engine === "plamo-web" && !engineState.plamoConsent) {
+    modal("端末内で翻訳する", plamoModelChoice);
+    return;
+  }
   if (
     lightweightPair &&
     engineState.engine === "wasm" &&
@@ -411,10 +463,17 @@ async function run() {
     for (let i = 0; i < next.length; i++) {
       const seg = next[i];
       if (resume && seg.target) continue;
-      $("match-info").textContent = "翻訳中… " + (i + 1) + " / " + next.length;
+      paragraphProgress = "翻訳中… " + (i + 1) + " / " + next.length;
+      $("match-info").textContent = paragraphProgress;
       const translated = await translateTextUnit(
         seg,
-        { ...langs, signal: controller.signal },
+        {
+          ...langs,
+          signal: controller.signal,
+          ...(engineState.useContext
+            ? paragraphContext(next[i - 1], seg, langs.source, langs.target)
+            : {}),
+        },
         engineState.engine,
         translate,
       );
@@ -652,6 +711,7 @@ async function showView(mode) {
   mode = mode === "pdf" ? "pdf" : "text";
   $("text-area").hidden = mode !== "text";
   $("pdf-area").hidden = mode !== "pdf";
+  controls();
   for (const b of document.querySelectorAll("[data-view]"))
     b.dataset.view === mode
       ? b.setAttribute("aria-current", "page")
@@ -736,8 +796,10 @@ icons();
 initAtmosphere();
 initAppearance().catch(() => {});
 subscribeEngineStatus((state) => {
-  if (activeJob && /取得中|準備しています/.test(state.status))
+  if (activeJob && /取得中|検証中|準備しています/.test(state.status))
     $("match-info").textContent = state.status;
+  else if (activeJob && state.status === "端末内で翻訳中…")
+    $("match-info").textContent = paragraphProgress;
 });
 if (fundingPage) {
   try {

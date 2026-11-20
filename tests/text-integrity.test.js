@@ -11,6 +11,160 @@ const enJa = { source: "en", target: "ja" };
 const jaEn = { source: "ja", target: "en" };
 const unit = (source) => ({ source, kind: "paragraph" });
 
+test("standalone financial quantities use target-language notation without inventing prose", async () => {
+  const unexpected = () =>
+    assert.fail("A complete literal does not need model generation");
+  assert.equal(
+    await translateTextUnit(
+      unit("125億円"),
+      jaEn,
+      "browser",
+      async () => "12.5 billion yen",
+    ),
+    "12.5 billion yen",
+  );
+  assert.equal(
+    await translateTextUnit(
+      unit("125億円"),
+      jaEn,
+      "wasm",
+      async () => "12 billion yen",
+    ),
+    "JPY 12,500,000,000",
+  );
+  assert.equal(
+    await translateTextUnit(
+      unit("2.5 percentage points"),
+      enJa,
+      "wasm",
+      async () => "2.5%の年齢ポイント",
+    ),
+    "2.5パーセントポイント",
+  );
+  assert.equal(
+    await translateTextUnit(
+      unit("125億円"),
+      jaEn,
+      "browser",
+      async (text) => text,
+    ),
+    "JPY 12,500,000,000",
+  );
+  assert.equal(
+    await translateTextUnit(
+      unit("3.2ミリ秒"),
+      jaEn,
+      "wasm",
+      async (text) => text,
+    ),
+    "3.2 ms",
+  );
+  assert.equal(
+    await translateTextUnit(
+      unit("3.2ミリ秒"),
+      jaEn,
+      "browser",
+      async () => "3.2 ms",
+    ),
+    "3.2 ms",
+  );
+  assert.equal(
+    await translateTextUnit(
+      unit("100万ドル"),
+      jaEn,
+      "browser",
+      async () => "a million dollars",
+    ),
+    "a million dollars",
+  );
+  assert.equal(
+    await translateTextUnit(
+      unit("1パーセントポイント"),
+      jaEn,
+      "browser",
+      async () => "one percentage point",
+    ),
+    "one percentage point",
+  );
+  assert.equal(
+    await translateTextUnit(unit("`MAX_LIMIT`"), jaEn, "browser", unexpected),
+    "`MAX_LIMIT`",
+  );
+});
+
+test("a standalone amount never accepts invented surrounding facts or an approximation", async () => {
+  for (const natural of [
+    "The company lost 12.5 billion yen.",
+    "12.5 billion yen in 2025",
+    "About 12.5 billion yen",
+    "≈12.5 billion yen",
+  ]) {
+    assert.equal(
+      await translateTextUnit(
+        unit("125億円"),
+        jaEn,
+        "browser",
+        async () => natural,
+      ),
+      "JPY 12,500,000,000",
+    );
+  }
+  assert.equal(
+    await translateTextUnit(
+      unit("125億円"),
+      jaEn,
+      "browser",
+      async () => "The 12.5 billion yen.",
+    ),
+    "The 12.5 billion yen.",
+  );
+  assert.equal(
+    await translateTextUnit(
+      unit("125億円"),
+      jaEn,
+      "browser",
+      async () => "125 億円",
+    ),
+    "JPY 12,500,000,000",
+  );
+  assert.equal(
+    await translateTextUnit(
+      unit("2.5 percentage points"),
+      enJa,
+      "browser",
+      async () => "2.5 percent points",
+    ),
+    "2.5パーセントポイント",
+  );
+  assert.equal(
+    await translateTextUnit(
+      unit("JPY 12.5 billion"),
+      enJa,
+      "browser",
+      async () => "JPY 12500000000",
+    ),
+    "JPY 12500000000",
+  );
+});
+
+test("Japanese spacing in correct financial translations does not force a masked retry", async () => {
+  let calls = 0;
+  const result = await translateTextUnit(
+    unit("Net income rose from JPY 340 million to JPY 510 million."),
+    enJa,
+    "browser",
+    async () => {
+      calls++;
+      return "純利益は 3 億 4000 万円から 5 億 1000 万円に増加しました。";
+    },
+  );
+  assert.equal(
+    result,
+    "純利益は 3 億 4000 万円から 5 億 1000 万円に増加しました。",
+  );
+  assert.equal(calls, 1);
+});
+
 test("explicit code, math and variables retain their spelling without mistaking prices for equations", () => {
   const text =
     "Pay $20 or $30. Use `FINAL_V2` and ``two ` ticks``, then compare $x_1 = 2$ to |x| and ||y||.";

@@ -14,6 +14,12 @@ const LANG = {
   hi: "Hindi",
 };
 const DEFINITIONS = {
+  "plamo-web": {
+    label: "PLaMo 3 Translate · ブラウザー",
+    privacy: "この端末内で翻訳",
+    description:
+      "翻訳専用のPLaMo 0.8Bをブラウザー内で実行します。初回のモデル取得は約573 MBです。取得後は端末に保存したモデルを使います。Built with PLaMo.",
+  },
   browser: {
     label: "ブラウザ内蔵",
     privacy: "この端末内で翻訳",
@@ -36,7 +42,7 @@ const DEFINITIONS = {
     label: "TranslateGemma · Ollama",
     privacy: "この端末のOllamaで翻訳",
     description:
-      "ローカルのOllamaでTranslateGemmaを使います。モデルはGemma利用規約に従います。翻訳元の言語を指定してください。",
+      "ローカルのOllamaで翻訳します。モデル名の候補は4Bと、より多くのメモリを使う12Bです。使いたいモデルを端末に用意し、翻訳元の言語を指定してください。",
   },
   ollama: {
     label: "その他のローカルモデル · Ollama",
@@ -48,7 +54,13 @@ const DEFINITIONS = {
     label: "Google Cloud Translation",
     privacy: "原文をGoogleへ送信 · 利用者のAPI料金",
     description:
-      "ご自身のGoogle Cloud Translation Basic v2のキーを使います。料金はそのキーのプロジェクトに請求されます。キーはタブを閉じるか、ページを再読み込みすると消えます。",
+      "Google Cloudの標準NMTで翻訳します。利用料金はご自身のプロジェクトに請求されます。APIキーはタブのメモリで扱います。",
+  },
+  "google-tllm": {
+    label: "Google Cloud · Translation LLM",
+    privacy: "原文をGoogleへ送信 · 利用者のLLM料金",
+    description:
+      "ブラウザーからGoogleの翻訳専用LLMに直接接続します。Cloud Translation APIを有効にしたご自身のプロジェクトが必要です。原文と訳文の文字数に応じたLLM料金が適用されます。",
   },
   gas: {
     label: "Google Apps Script",
@@ -57,29 +69,66 @@ const DEFINITIONS = {
       "ご自身のApps ScriptのURLと接続用シークレットを指定します。LanguageAppの無料割当を使います。URLやキーをサイトに保存しません。",
   },
 };
+const deviceDefault =
+  typeof globalThis.Translator !== "undefined" ? "browser" : "wasm";
+const plamoPermissionKey = "translationhub.plamo-web.7de4409f.permission";
+export const plamoLicense = "./vendor/plamo/PLAMO-LICENSE-ja.txt";
+function supportsBrowserPlamo() {
+  if (
+    !globalThis.isSecureContext ||
+    !globalThis.Worker ||
+    !globalThis.WebAssembly?.Suspending ||
+    !globalThis.navigator?.storage?.getDirectory
+  )
+    return false;
+  try {
+    new WebAssembly.Memory({ address: "i64", initial: 1n });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const browserPlamoAvailable = supportsBrowserPlamo();
+function hasPlamoPermission() {
+  try {
+    return globalThis.localStorage?.getItem(plamoPermissionKey) === "yes";
+  } catch {
+    return false;
+  }
+}
+let explicitEngine = false;
 const state = {
-  engine: typeof globalThis.Translator !== "undefined" ? "browser" : "wasm",
+  engine: deviceDefault,
   endpoint: "http://127.0.0.1:11434",
   model: "hf.co/pfnet/plamo-3-translate-0.8b-GGUF:Q4_K_M",
   googleKey: "",
+  googleProject: "",
+  useContext: true,
   gasUrl: "",
   gasSecret: "",
   consent: false,
   wasmConsent: false,
+  plamoConsent: hasPlamoPermission(),
   status: "",
   busy: false,
 };
 let mounted = null,
   callbacks = {},
   worker,
+  workerEngine,
   workerActiveId = null,
   workerId = 0,
+  preparationController,
   sessionPromise;
 const pending = new Map();
 const browserTranslators = new Map();
 const statusListeners = new Set();
 
 export function engineLabel() {
+  if (state.engine === "gemma") {
+    const size = /^translategemma:(4b|12b)$/i.exec(state.model.trim())?.[1];
+    if (size) return `TranslateGemma ${size.toUpperCase()} · Ollama`;
+  }
   return DEFINITIONS[state.engine].label;
 }
 export function enginePrivacy() {
@@ -92,11 +141,36 @@ export function getEngineState() {
       ? { model: state.model.trim() }
       : {}),
     label: engineLabel(),
+    ...(["plamo", "plamo-web"].includes(state.engine) && state.useContext
+      ? { useContext: true }
+      : {}),
     privacy: enginePrivacy(),
     status: state.status,
     busy: state.busy,
     wasmConsent: state.wasmConsent,
+    plamoConsent: state.plamoConsent,
   };
+}
+export function selectDeviceDefault(englishJapaneseText) {
+  if (explicitEngine || state.busy) return;
+  const next =
+    englishJapaneseText && browserPlamoAvailable ? "plamo-web" : deviceDefault;
+  if (next !== state.engine) {
+    if (worker && workerEngine !== next && workerActiveId === null) stopWorker();
+    state.engine = next;
+    state.status = "";
+  }
+}
+
+export function allowPlamo(allowed = true) {
+  state.plamoConsent = allowed;
+  try {
+    if (allowed) globalThis.localStorage?.setItem(plamoPermissionKey, "yes");
+    else globalThis.localStorage?.removeItem(plamoPermissionKey);
+  } catch {
+    /* The in-memory choice still works in this tab. */
+  }
+  changed();
 }
 export function enableLightweight() {
   if (state.engine !== "wasm") setEngine("wasm");
@@ -112,6 +186,9 @@ export function subscribeEngineStatus(listener) {
 }
 export function setEngine(engine) {
   if (!DEFINITIONS[engine]) throw new Error("Unknown engine");
+  explicitEngine = true;
+  if (worker && workerEngine !== engine && workerActiveId === null)
+    stopWorker();
   state.engine = engine;
   state.status = "";
   state.consent = false;
@@ -271,16 +348,23 @@ function stopWorker() {
     worker.terminate();
   }
   worker = null;
+  workerEngine = null;
   workerActiveId = null;
 }
 function pumpWorker() {
   if (workerActiveId !== null || !pending.size) return;
   const [id, next] = pending.entries().next().value;
+  if (worker && workerEngine !== next.engine) stopWorker();
   if (!worker) {
     try {
-      worker = new Worker(new URL("./translation-worker.js", import.meta.url), {
+      const file =
+        next.engine === "plamo-web"
+          ? "./plamo-browser-worker.js"
+          : "./translation-worker.js";
+      worker = new Worker(new URL(file, import.meta.url), {
         type: "module",
       });
+      workerEngine = next.engine;
     } catch (error) {
       pending.delete(id);
       next.cleanup();
@@ -293,12 +377,18 @@ function pumpWorker() {
       if (!item || data.id !== workerActiveId) return;
       if (data.type === "progress") {
         const d = data.detail;
+        if (d.phase === "inference") {
+          status("端末内で翻訳中…");
+          return;
+        }
         status(
           d.status === "progress"
             ? `モデルを取得中 ${Math.round(d.progress || 0)}% · ${d.file || ""}`
-            : d.status === "ready"
-              ? "端末内モデルの準備ができました。"
-              : "端末内モデルを準備しています…",
+            : d.phase === "verify"
+              ? "取得済みのモデルを検証中…"
+              : d.status === "ready"
+                ? "端末内モデルの準備ができました。"
+                : "端末内モデルを準備しています…",
         );
       } else {
         pending.delete(data.id);
@@ -308,6 +398,8 @@ function pumpWorker() {
           const error = new Error(data.message);
           if (data.code === "LOCAL_TRANSLATION_INCOMPLETE")
             error.code = data.code;
+          if (data.code === "PLAMO_RUNTIME" || data.code === "PLAMO_TIMEOUT")
+            stopWorker();
           item.reject(error);
         } else item.resolve(data.result);
         pumpWorker();
@@ -337,7 +429,15 @@ function pumpWorker() {
     pumpWorker();
   }
 }
-function runWorker(action, text, source, target, signal) {
+function runWorker(
+  action,
+  text,
+  source,
+  target,
+  signal,
+  engine = "wasm",
+  context = {},
+) {
   checkAbort(signal);
   const id = ++workerId;
   return new Promise((resolve, reject) => {
@@ -363,7 +463,8 @@ function runWorker(action, text, source, target, signal) {
       resolve,
       reject,
       cleanup,
-      request: { id, action, text, source, target },
+      engine,
+      request: { id, action, text, source, target, ...context },
     });
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
@@ -391,11 +492,29 @@ async function browserTranslator(source, target, signal) {
     },
   });
   browserTranslators.set(key, translator);
+  // A signal passed to create() owns the Translator's lifetime. Canceling its
+  // first job destroys the instance, so it must not remain in the reuse cache.
+  const forget = () => {
+    if (browserTranslators.get(key) === translator)
+      browserTranslators.delete(key);
+  };
+  signal?.addEventListener("abort", forget, { once: true });
+  if (signal?.aborted) {
+    forget();
+    translator.destroy();
+    checkAbort(signal);
+  }
   return translator;
 }
 export async function translate(
   text,
-  { source = "auto", target = "ja", signal } = {},
+  {
+    source = "auto",
+    target = "ja",
+    signal,
+    sourceContext,
+    previousTranslation,
+  } = {},
 ) {
   checkAbort(signal);
   if (!text?.trim()) return "";
@@ -404,7 +523,26 @@ export async function translate(
   // One translation keeps the chosen endpoint/consent even if settings change
   // while a long PDF block is being translated. Nothing is persisted.
   const connection = { ...state };
-  const options = { source, target, signal };
+  const context = {};
+  if (
+    ["plamo", "plamo-web"].includes(connection.engine) &&
+    connection.useContext &&
+    sourceContext?.trim() &&
+    sourceContext.length <= 640 &&
+    !sourceContext.includes("<|plamo:")
+  ) {
+    context.sourceContext = sourceContext;
+    if (
+      source === "ja" &&
+      target === "en" &&
+      previousTranslation?.trim() &&
+      previousTranslation.length <= 640 &&
+      !previousTranslation.includes("<|plamo:")
+    ) {
+      context.previousTranslation = previousTranslation;
+    }
+  }
+  const options = { source, target, signal, context };
   if (!["wasm", "browser"].includes(connection.engine) && text.length > 3000) {
     const units = providerChunks(text);
     const translated = [];
@@ -425,7 +563,11 @@ export async function translate(
   }
   return translateOne(text, options, connection);
 }
-async function translateOne(text, { source, target, signal }, connection) {
+async function translateOne(
+  text,
+  { source, target, signal, context },
+  connection,
+) {
   checkAbort(signal);
   const currentEngine = connection.engine;
   let result;
@@ -456,6 +598,22 @@ async function translateOne(text, { source, target, signal }, connection) {
         );
       throw error;
     }
+  } else if (currentEngine === "plamo-web") {
+    if (!browserPlamoAvailable)
+      fail(
+        "このブラウザーはPLaMoの実行に必要なWebAssembly機能に対応していません。別の翻訳方式を選んでください。",
+      );
+    if (!connection.plamoConsent)
+      fail("PLaMoの利用条件を確認し、モデルの取得を許可してください。");
+    result = await runWorker(
+      "translate",
+      text,
+      source,
+      target,
+      signal,
+      currentEngine,
+      context,
+    );
   } else if (currentEngine === "wasm") {
     if (!state.wasmConsent)
       fail(
@@ -474,9 +632,18 @@ async function translateOne(text, { source, target, signal }, connection) {
     if (currentEngine === "plamo") {
       const settings =
         `[plamo-translate]\ntarget_lang=${target}` +
-        (source !== "auto" ? `\nsource_lang=${source}` : "");
+        (source !== "auto" ? `\nsource_lang=${source}` : "") +
+        (context.sourceContext && !context.previousTranslation
+          ? "\n---\n" + context.sourceContext
+          : "");
       messages = [
         { role: "system", content: settings },
+        ...(context.previousTranslation
+          ? [
+              { role: "user", content: context.sourceContext },
+              { role: "assistant", content: context.previousTranslation },
+            ]
+          : []),
         { role: "user", content: text },
       ];
     } else if (currentEngine === "gemma") {
@@ -521,7 +688,15 @@ async function translateOne(text, { source, target, signal }, connection) {
   } else {
     if (!connection.consent)
       fail("設定で原文の外部送信先を確認し、送信を許可してください。");
-    if (currentEngine === "google") {
+    if (currentEngine === "google-tllm") {
+      result = await googleTranslationLLM(
+        text,
+        source,
+        target,
+        connection,
+        signal,
+      );
+    } else if (currentEngine === "google") {
       if (!connection.googleKey.trim())
         fail("ご自身のGoogle Cloud APIキーを入力してください。");
       const data = await companion(
@@ -561,7 +736,59 @@ async function translateOne(text, { source, target, signal }, connection) {
   return result.trim();
 }
 
+async function googleTranslationLLM(text, source, target, connection, signal) {
+  const key = connection.googleKey.trim();
+  const project = connection.googleProject.trim();
+  if (!key) fail("ご自身のGoogle Cloud APIキーを入力してください。");
+  if (
+    !/^(?:(?:[a-z0-9.-]+:)?[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,20})$/.test(
+      project,
+    )
+  )
+    fail("Google CloudのプロジェクトIDまたは番号を確認してください。");
+  const response = await fetch(
+    "https://translation.googleapis.com/language/translate/v2",
+    {
+      method: "POST",
+      mode: "cors",
+      credentials: "omit",
+      cache: "no-store",
+      redirect: "error",
+      referrerPolicy: "strict-origin",
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(120000)])
+        : AbortSignal.timeout(120000),
+      headers: { "Content-Type": "application/json", "X-Goog-Api-Key": key },
+      body: JSON.stringify({
+        q: [text],
+        format: "text",
+        target,
+        ...(source === "auto" ? {} : { source }),
+        model: `projects/${project}/locations/us-central1/models/general/translation-llm`,
+      }),
+    },
+  );
+  if (!response.ok) {
+    if (response.status === 429) fail("Google Cloudの利用枠に達しました。");
+    if (response.status === 400 || response.status === 403)
+      fail(
+        `Googleがリクエストを受け付けませんでした（${response.status}）。APIキー、キーの制限、プロジェクトの課金とCloud Translation APIの設定、対応言語を確認してください。`,
+      );
+    fail(
+      `Google Cloud Translation LLM に接続できませんでした（${response.status}）。`,
+    );
+  }
+  const data = await response.json();
+  return data.data?.translations?.[0]?.translatedText;
+}
+
 export async function testEngine({ source = "en", target = "ja" } = {}) {
+  if (state.busy) {
+    preparationController?.abort();
+    return;
+  }
+  if (["plamo-web", "wasm"].includes(state.engine))
+    preparationController = new AbortController();
   state.busy = true;
   render();
   status("接続・モデルを確認しています…");
@@ -569,10 +796,32 @@ export async function testEngine({ source = "en", target = "ja" } = {}) {
     if (state.engine === "browser") {
       await browserTranslator(source === "auto" ? "en" : source, target);
       status("ブラウザ内蔵翻訳の準備ができました。");
+    } else if (state.engine === "plamo-web") {
+      if (!browserPlamoAvailable)
+        fail(
+          "このブラウザーはPLaMoの実行に必要なWebAssembly機能に対応していません。別の翻訳方式を選んでください。",
+        );
+      if (!state.plamoConsent)
+        fail("PLaMoの利用条件を確認し、モデルの取得を許可してください。");
+      await runWorker(
+        "prepare",
+        "",
+        source,
+        target,
+        preparationController.signal,
+        "plamo-web",
+      );
+      status("PLaMoの端末内モデルを準備できました。");
     } else if (state.engine === "wasm") {
       if (!state.wasmConsent)
         fail("モデルの取得とキャッシュを許可してください。");
-      await runWorker("prepare", "", source === "auto" ? "en" : source, target);
+      await runWorker(
+        "prepare",
+        "",
+        source === "auto" ? "en" : source,
+        target,
+        preparationController.signal,
+      );
       status("端末内モデルの準備ができました。");
     } else if (["plamo", "gemma", "ollama"].includes(state.engine)) {
       const data = await companion("/api/bridge", {
@@ -597,12 +846,16 @@ export async function testEngine({ source = "en", target = "ja" } = {}) {
       status(`接続できました · Hello. → ${result}`);
     }
   } catch (error) {
-    status(error.message);
-    callbacks.notify?.(error.message);
+    const message =
+      error.name === "AbortError"
+        ? "モデルの準備を中止しました。"
+        : error.message;
+    status(message);
+    callbacks.notify?.(message);
   } finally {
+    preparationController = undefined;
     state.busy = false;
-    const button = mounted?.querySelector("[data-test-engine]");
-    if (button) button.disabled = false;
+    render();
     changed();
   }
 }
@@ -633,11 +886,16 @@ function field(parent, label, key, { type = "text", placeholder = "" } = {}) {
   });
   wrapper.append(input);
   parent.append(wrapper);
+  return input;
 }
 function check(parent, label, key) {
   const wrapper = element("label", { className: "engine-check" });
   const input = element("input", { type: "checkbox", checked: state[key] });
   input.addEventListener("change", () => {
+    if (key === "plamoConsent") {
+      allowPlamo(input.checked);
+      return;
+    }
     state[key] = input.checked;
     changed();
   });
@@ -650,7 +908,10 @@ function render() {
   mounted.classList.add("engine-settings");
   const selectorLabel = element("label", { className: "engine-field" });
   selectorLabel.append(element("span", {}, "翻訳方式"));
-  const select = element("select", { "aria-label": "翻訳方式" });
+  const select = element("select", {
+    "aria-label": "翻訳方式",
+    disabled: state.busy,
+  });
   for (const [value, def] of Object.entries(DEFINITIONS))
     select.append(
       element("option", { value, selected: value === state.engine }, def.label),
@@ -679,22 +940,71 @@ function render() {
       ),
     );
   }
+  if (state.engine === "plamo-web") {
+    mounted.append(
+      element(
+        "a",
+        { href: plamoLicense, target: "_blank", rel: "noopener noreferrer" },
+        "PLaMo Community License（利用条件）",
+      ),
+    );
+    check(
+      mounted,
+      "利用条件に同意し、約573 MBのモデルをこのブラウザーに取得・保存することを許可",
+      "plamoConsent",
+    );
+    check(mounted, "文章翻訳で直前の段落を文脈として参照する", "useContext");
+  }
   if (["plamo", "gemma", "ollama"].includes(state.engine)) {
     field(mounted, "OllamaのURL（この端末のみ）", "endpoint");
-    field(mounted, "モデル名", "model");
-    const command =
+    const modelInput = field(mounted, "モデル名", "model");
+    const suggested =
       state.engine === "gemma"
-        ? "ollama pull translategemma:4b"
+        ? ["translategemma:4b", "translategemma:12b"]
         : state.engine === "plamo"
-          ? "ollama pull hf.co/pfnet/plamo-3-translate-0.8b-GGUF:Q4_K_M"
-          : "ollama list";
-    mounted.append(element("code", { className: "engine-command" }, command));
+          ? ["hf.co/pfnet/plamo-3-translate-0.8b-GGUF:Q4_K_M"]
+          : [];
+    if (state.engine === "gemma") {
+      const choices = element("datalist", { id: "gemma-models" });
+      for (const value of suggested)
+        choices.append(element("option", { value }));
+      modelInput.setAttribute("list", "gemma-models");
+      mounted.append(choices);
+    }
+    const command = element("code", { className: "engine-command" });
+    const updateCommand = () => {
+      const model = modelInput.value.trim();
+      command.textContent = suggested.includes(model)
+        ? "ollama pull " + model
+        : "ollama list";
+    };
+    updateCommand();
+    modelInput.addEventListener("input", updateCommand);
+    mounted.append(command);
+    if (state.engine === "plamo")
+      check(mounted, "文章翻訳で直前の段落を文脈として参照する", "useContext");
   }
-  if (state.engine === "google")
+  const googleCloud =
+    state.engine === "google" || state.engine === "google-tllm";
+  if (googleCloud)
     field(mounted, "Google Cloud APIキー · このタブのメモリのみ", "googleKey", {
       type: "password",
       placeholder: "APIキーを入力",
     });
+  if (state.engine === "google-tllm") {
+    field(mounted, "Google Cloud プロジェクトIDまたは番号", "googleProject");
+    mounted.append(
+      element(
+        "a",
+        {
+          href: "https://cloud.google.com/translate/pricing",
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+        "Google Cloudの翻訳料金",
+      ),
+    );
+  }
   if (state.engine === "gas") {
     field(mounted, "自分のApps Script WebアプリURL", "gasUrl", {
       placeholder: "https://script.google.com/macros/s/…/exec",
@@ -712,16 +1022,20 @@ function render() {
     );
     mounted.append(link);
   }
-  if (["google", "gas"].includes(state.engine))
+  if (googleCloud || state.engine === "gas")
     check(
       mounted,
-      `${state.engine === "google" ? "Google Cloud" : "指定したApps Script"}へ原文を送り、テスト時には「Hello.」を送信することを許可`,
+      `${googleCloud ? "Google Cloud" : "指定したApps Script"}へ原文を送り、テスト時には「Hello.」を送信することを許可`,
       "consent",
     );
   const test = element(
     "button",
-    { type: "button", disabled: state.busy, "data-test-engine": "" },
-    "接続・モデルを確認",
+    {
+      type: "button",
+      disabled: state.busy && !preparationController,
+      "data-test-engine": "",
+    },
+    preparationController ? "モデルの準備を中止" : "接続・モデルを確認",
   );
   test.addEventListener("click", () =>
     testEngine(callbacks.getLanguages?.() || {}),
@@ -755,6 +1069,16 @@ function render() {
         rel: "noopener noreferrer",
       },
       "翻訳モデル・ライブラリの出典と利用条件",
+    ),
+    element(
+      "a",
+      {
+        className: "engine-hint",
+        href: "./quality/index.html",
+        target: "_blank",
+        rel: "noopener noreferrer",
+      },
+      "Google翻訳と比較した原文・訳文を見る",
     ),
   );
 }

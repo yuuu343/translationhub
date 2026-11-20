@@ -56,6 +56,9 @@ function literals(text, includeMeasures, financialTarget) {
         start: m.index,
         end: m.index + m[0].length,
         key: number + " " + (equivalents.get(m[2]) || m[2]),
+        ...(financialTarget === "en" && /\p{Script=Katakana}/u.test(m[2])
+          ? { replacement: m[1] + " " + equivalents.get(m[2]) }
+          : {}),
       });
     }
   }
@@ -97,7 +100,14 @@ export function protectLiterals(text, includeMeasures, financialTarget) {
   const needsProse = /\p{L}/u.test(masked.replace(markers, ""));
   return {
     masked,
-    intact(result) {
+    intact(result, { standalone = false } = {}) {
+      // A bare quantity may acquire an article, but not an invented assertion.
+      // For this validation only, an initial a/an/one denotes exactly one.
+      if (standalone)
+        result = result
+          .trim()
+          .replace(/^the\s+/i, "")
+          .replace(/^(?:an?|one)\s+/i, "1 ");
       const found = literals(result, includeMeasures, financialTarget);
       const got = found.map((s) => s.key).sort();
       // Counts matter when a value is repeated or the translation has dropped
@@ -107,6 +117,16 @@ export function protectLiterals(text, includeMeasures, financialTarget) {
         !got.every((s, i) => s === expected[i])
       )
         return false;
+      if (standalone) {
+        let cursor = 0,
+          outside = "";
+        for (const s of found) {
+          outside += result.slice(cursor, s.start);
+          cursor = s.end;
+        }
+        outside += result.slice(cursor);
+        return /^[\s.。]*$/u.test(outside);
+      }
       if (!needsProse) return true;
       let end = 0;
       for (const s of found) {

@@ -20,7 +20,13 @@ class Element {
     this.attrs[name] = value;
   }
   addEventListener(name, fn) {
-    this.listeners[name] = fn;
+    const previous = this.listeners[name];
+    this.listeners[name] = previous
+      ? (...args) => {
+          previous(...args);
+          fn(...args);
+        }
+      : fn;
   }
   append(...children) {
     this.children.push(...children);
@@ -46,7 +52,9 @@ async function setup(engine, respond) {
   };
   globalThis.document = { createElement: (tag) => new Element(tag) };
   const requests = [];
+  const transport = [];
   globalThis.fetch = async (url, options = {}) => {
+    transport.push({ url, options });
     if (url.endsWith("/api/session"))
       return { ok: true, json: async () => ({ token: "synthetic-session" }) };
     const body = JSON.parse(options.body);
@@ -81,7 +89,7 @@ async function setup(engine, respond) {
     input("WebアプリURL", "https://script.google.com/macros/s/synthetic/exec");
     input("接続用シークレット", "synthetic-secret-at-least-32-characters");
   }
-  return { module, requests, input, consent };
+  return { module, requests, input, consent, transport };
 }
 const complete = {
   done: true,
@@ -124,6 +132,97 @@ test("unfinished Ollama output is rejected", async () => {
     module.translate("A complete sentence.", { source: "en" }),
     /完了/,
   );
+});
+
+test("PLaMo uses a separate reference field and leaves the text being translated intact", async () => {
+  const { module, requests } = await setup("plamo", () => complete);
+  await module.translate("It was still there.", {
+    source: "en",
+    target: "ja",
+    sourceContext: "We were watching birds.",
+  });
+  assert.equal(
+    requests[0].messages[0].content,
+    "[plamo-translate]\ntarget_lang=ja\nsource_lang=en\n---\nWe were watching birds.",
+  );
+  assert.equal(requests[0].messages[1].content, "It was still there.");
+  await module.translate("A new document.", { source: "en", target: "ja" });
+  assert.doesNotMatch(requests[1].messages[0].content, /watching birds/);
+});
+
+test("PLaMo uses the preceding translation only for a complete Japanese-to-English pair", async () => {
+  const { module, requests } = await setup("plamo", () => complete);
+  const prior = {
+    sourceContext: "眼鏡を買った。",
+    previousTranslation: "I bought glasses.",
+  };
+  await module.translate("毎日かけている。", {
+    source: "ja",
+    target: "en",
+    ...prior,
+  });
+  assert.deepEqual(requests[0].messages, [
+    {
+      role: "system",
+      content: "[plamo-translate]\ntarget_lang=en\nsource_lang=ja",
+    },
+    { role: "user", content: prior.sourceContext },
+    { role: "assistant", content: prior.previousTranslation },
+    { role: "user", content: "毎日かけている。" },
+  ]);
+  await module.translate("Every day.", {
+    source: "en",
+    target: "ja",
+    ...prior,
+  });
+  assert.equal(requests[1].messages.length, 2);
+  assert.ok(!JSON.stringify(requests[1]).includes(prior.previousTranslation));
+});
+
+test("Google Translation LLM requires consent and a project without saving credentials to document metadata", async () => {
+  const { module, requests, input, consent, transport } = await setup(
+    "google-tllm",
+    () => ({
+      data: { translations: [{ translatedText: "合成の訳文" }] },
+    }),
+  );
+  input("Google Cloud APIキー", "synthetic-key");
+  const translate = () =>
+    module.translate("Synthetic example.", {
+      source: "en",
+      target: "ja",
+      sourceContext: "private previous source",
+      previousTranslation: "private previous translation",
+    });
+  await assert.rejects(translate(), /送信を許可/);
+  consent();
+  await assert.rejects(translate(), /プロジェクト/);
+  assert.equal(requests.length, 0);
+  assert.equal(transport.length, 0);
+  input("プロジェクトID", "synthetic-project");
+  assert.equal(await translate(), "合成の訳文");
+  assert.deepEqual(requests[0], {
+    q: ["Synthetic example."],
+    source: "en",
+    target: "ja",
+    format: "text",
+    model:
+      "projects/synthetic-project/locations/us-central1/models/general/translation-llm",
+  });
+  assert.equal(transport.length, 1);
+  assert.equal(
+    transport[0].url,
+    "https://translation.googleapis.com/language/translate/v2",
+  );
+  assert.equal(transport[0].options.headers["X-Goog-Api-Key"], "synthetic-key");
+  assert.equal(transport[0].options.credentials, "omit");
+  assert.equal(transport[0].options.redirect, "error");
+  assert.doesNotMatch(
+    JSON.stringify(module.getEngineState()),
+    /synthetic-(key|project)/,
+  );
+  module.setEngine("google");
+  await assert.rejects(translate(), /送信を許可/);
 });
 
 test("cloud input requires consent and preserves literal entities and formulas", async () => {

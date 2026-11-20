@@ -59,6 +59,62 @@ class ForwardTests(unittest.TestCase):
             self.handler.forward(self.request)
         self.assertEqual(len(self.calls), 1)
 
+    def test_plamo_reference_context_does_not_join_current_source(self):
+        reference = 'Heavy rain had swollen the river overnight.\nEngineers found cracks in the earthen barrier.'
+        source = 'The bank had to be reinforced before work could continue.'
+        settings = '[plamo-translate]\ntarget_lang=ja\nsource_lang=en\n---\n' + reference
+        self.request['messages'] = [
+            {'role': 'system', 'content': settings},
+            {'role': 'user', 'content': source},
+        ]
+        self.handler.forward(self.request)
+        payload = self.calls[-1][1]
+        self.assertEqual(payload['messages'], [
+            {'role': 'system', 'content': settings},
+            {'role': 'user', 'content': source},
+        ])
+        self.assertFalse(payload['truncate'])
+        self.assertFalse(payload['shift'])
+
+    def test_plamo_accepts_only_a_complete_bounded_history_pair(self):
+        self.request['messages'] = [
+            {'role': 'system', 'content': '[plamo-translate]\ntarget_lang=en\nsource_lang=ja'},
+            {'role': 'user', 'content': '眼鏡を買った。'},
+            {'role': 'assistant', 'content': 'I bought glasses.'},
+            {'role': 'user', 'content': '毎日かけている。'},
+        ]
+        self.handler.forward(self.request)
+        self.assertEqual(self.calls[-1][1]['messages'], self.request['messages'])
+        for profile, role, size in [('gemma', 'assistant', 1), ('plamo', 'system', 1), ('plamo', 'assistant', 641)]:
+            self.request['profile'] = profile
+            self.request['messages'][2] = {'role': role, 'content': 'x' * size}
+            with self.assertRaisesRegex(ValueError, 'history'):
+                self.handler.forward(self.request)
+
+    def test_reference_context_counts_toward_input_budget(self):
+        self.info['model_info']['plamo3.context_length'] = 8192
+        self.request['messages'] = [
+            {'role': 'system', 'content': '[plamo-translate]\ntarget_lang=en\n---\n' + '参照文脈。' * 300},
+            {'role': 'user', 'content': 'それは小さかった。'},
+        ]
+        with self.assertRaisesRegex(ValueError, '文脈上限'):
+            self.handler.forward(self.request)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_previous_request_context_is_not_reused(self):
+        self.request['messages'] = [
+            {'role': 'system', 'content': '[plamo-translate]\ntarget_lang=en\n---\n前の文書だけの参照。'},
+            {'role': 'user', 'content': '最初の文書。'},
+        ]
+        self.handler.forward(self.request)
+        self.request['messages'] = [
+            {'role': 'system', 'content': '[plamo-translate]\ntarget_lang=en'},
+            {'role': 'user', 'content': '別の文書。'},
+        ]
+        self.handler.forward(self.request)
+        self.assertEqual(self.calls[-1][1]['messages'], self.request['messages'])
+        self.assertNotIn('前の文書', json.dumps(self.calls[-1][1], ensure_ascii=False))
+
     def test_google_plain_text_is_not_unescaped_twice(self):
         raw = 'x < 0; AT&T; literal &lt; and &#39; and \\alpha'
         self.result = {'data': {'translations': [{'translatedText': raw}]}}
