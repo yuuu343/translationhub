@@ -11,6 +11,10 @@ import { initAppearance, mountAppearance } from "./appearance.js";
 import { initTextSizing } from "./text-size.js";
 import { prepareTextJob, translateTextUnit } from "./text-job.js";
 import {
+  normalizeEngineIdentity,
+  canResumeWithEngine,
+} from "./engine-identity.js";
+import {
   translate,
   engineLabel,
   enginePrivacy,
@@ -35,13 +39,17 @@ let pdf,
 let segments = [],
   originalText = "",
   label = "",
+  translationEngine,
   title = "",
   pdfBusy = false,
   layout = "side";
 let selectedSentence = 0;
 const readyDirections = new Set();
 function directionKey({ source, target }) {
-  return getEngineState().engine + "|" + source + "|" + target;
+  const selected = getEngineState();
+  return (
+    selected.engine + "|" + (selected.model || "") + "|" + source + "|" + target
+  );
 }
 const getLanguages = () => ({ source: $("from").value, target: $("to").value });
 const getPdfLanguages = () => ({
@@ -103,6 +111,7 @@ function doc() {
     text: originalText,
     segments,
     engine: label,
+    ...(translationEngine ? { engineIdentity: { ...translationEngine } } : {}),
     from,
     to,
     title:
@@ -172,7 +181,7 @@ function controls() {
   $("run").lastElementChild.textContent = activeJob
     ? "中止"
     : hasOutput &&
-        label === engineLabel() &&
+        canResumeWithEngine(translationEngine, getEngineState(), label) &&
         segments.every((s) => s.kind) &&
         segments.some((s) => !s.target)
       ? "続きから翻訳"
@@ -216,6 +225,7 @@ function applyDoc(data, id = null) {
   input.value = data.text;
   segments = data.segments;
   label = data.engine;
+  translationEngine = normalizeEngineIdentity(data.engineIdentity);
   title = data.title;
   $("from").value = data.from;
   $("to").value = data.to;
@@ -249,6 +259,7 @@ input.addEventListener("input", () => {
   segments = [];
   title = "";
   label = "";
+  translationEngine = undefined;
   editMode = true;
   markDirty();
   draw();
@@ -257,6 +268,7 @@ for (const id of ["from", "to"])
   $(id).onchange = () => {
     segments = [];
     label = "";
+    translationEngine = undefined;
     editMode = true;
     markDirty();
     draw();
@@ -281,6 +293,7 @@ $("swap").onclick = () => {
   }
   $("from").value = target;
   $("to").value = source;
+  translationEngine = undefined;
   title = "";
   markDirty();
   draw();
@@ -372,12 +385,13 @@ async function run() {
     return;
   }
   const controller = new AbortController(),
-    engine = engineLabel();
+    engine = engineLabel(),
+    identity = normalizeEngineIdentity(engineState);
   const { next, resume } = prepareTextJob(
     originalText,
     langs.source,
     engineState.engine,
-    label === engine ? segments : [],
+    canResumeWithEngine(translationEngine, engineState, label) ? segments : [],
   );
   if (
     !resume &&
@@ -407,9 +421,13 @@ async function run() {
       if (!translated?.trim())
         throw Error("翻訳エンジンから空の応答が届きました。");
       readyDirections.add(directionKey(langs));
-      seg.target = translated.trim();
+      seg.target =
+        seg.kind === "table" || seg.kind === "code"
+          ? translated
+          : translated.trim();
       segments = next;
       label = engine;
+      translationEngine = identity;
       editMode = false;
       markDirty();
       if (!touched) {

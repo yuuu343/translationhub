@@ -72,6 +72,7 @@ const state = {
 let mounted = null,
   callbacks = {},
   worker,
+  workerActiveId = null,
   workerId = 0,
   sessionPromise;
 const pending = new Map();
@@ -87,6 +88,9 @@ export function enginePrivacy() {
 export function getEngineState() {
   return {
     engine: state.engine,
+    ...(["plamo", "gemma", "ollama"].includes(state.engine)
+      ? { model: state.model.trim() }
+      : {}),
     label: engineLabel(),
     privacy: enginePrivacy(),
     status: state.status,
@@ -144,10 +148,10 @@ function sourceFor(text, source) {
     return "en";
   fail("この翻訳方式では、翻訳元の言語を選んでください。");
 }
-function localOnlyEndpoint() {
+function localOnlyEndpoint(endpoint = state.endpoint) {
   let url;
   try {
-    url = new URL(state.endpoint);
+    url = new URL(endpoint);
   } catch {
     fail("OllamaのURLを確認してください。");
   }
@@ -176,6 +180,7 @@ async function companion(path, body, signal) {
       sessionPromise = fetch(`${companionBase()}/api/session`, {
         cache: "no-store",
         credentials: "omit",
+        signal: AbortSignal.timeout(10000),
       })
         .then(async (r) => {
           if (!r.ok) throw new Error("Local companion is unavailable");
@@ -187,7 +192,7 @@ async function companion(path, body, signal) {
           sessionPromise = null;
           throw error;
         });
-    const token = await sessionPromise;
+    const token = await abortable(sessionPromise, signal);
     checkAbort(signal);
     const response = await fetch(`${companionBase()}${path}`, {
       method: "POST",
@@ -206,22 +211,86 @@ async function companion(path, body, signal) {
     return data;
   } catch (error) {
     if (error.name === "AbortError" || signal?.aborted) throw error;
-    if (error instanceof TypeError || /companion/.test(error.message))
+    if (
+      error instanceof TypeError ||
+      error.name === "TimeoutError" ||
+      /companion/.test(error.message)
+    )
       throw new Error(
         "接続用サーバーを起動してください。「start.bat」で開いた http://127.0.0.1:8771 から利用できます。",
       );
     throw error;
   }
 }
-function runWorker(action, text, source, target, signal) {
+function abortable(promise, signal) {
   checkAbort(signal);
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const abort = () =>
+      reject(signal.reason || new DOMException("中止しました", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    promise
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+function providerChunks(text, limit = 3000) {
+  const chunks = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const whitespace = text.slice(cursor).match(/^\s*/)[0];
+    cursor += whitespace.length;
+    if (cursor >= text.length) break;
+    let end = Math.min(cursor + limit, text.length);
+    if (end < text.length) {
+      if (/[\uDC00-\uDFFF]/.test(text[end])) end--;
+      const window = text.slice(cursor, end);
+      const paragraphs = [...window.matchAll(/\r?\n[\t ]*\r?\n/g)];
+      const sentences = [
+        ...window.matchAll(/[.!?。！？]["”’')）]*(?:\s+|(?=[^\x00-\x7f]))/g),
+      ];
+      const spaces = [...window.matchAll(/\s+/g)];
+      const boundary = [paragraphs, sentences, spaces]
+        .map((matches) => matches.at(-1))
+        .find((match) => match && match.index >= limit / 3);
+      if (boundary)
+        end =
+          cursor +
+          boundary.index +
+          (boundary[0].trim() ? boundary[0].trimEnd().length : 0);
+    }
+    const raw = text.slice(cursor, end);
+    chunks.push({ text: raw.trimEnd(), gap: whitespace });
+    cursor = end - (raw.length - raw.trimEnd().length);
+  }
+  return chunks;
+}
+function stopWorker() {
+  if (worker) {
+    worker.onmessage = worker.onerror = null;
+    worker.terminate();
+  }
+  worker = null;
+  workerActiveId = null;
+}
+function pumpWorker() {
+  if (workerActiveId !== null || !pending.size) return;
+  const [id, next] = pending.entries().next().value;
   if (!worker) {
-    worker = new Worker(new URL("./translation-worker.js", import.meta.url), {
-      type: "module",
-    });
+    try {
+      worker = new Worker(new URL("./translation-worker.js", import.meta.url), {
+        type: "module",
+      });
+    } catch (error) {
+      pending.delete(id);
+      next.cleanup();
+      next.reject(error);
+      queueMicrotask(pumpWorker);
+      return;
+    }
     worker.onmessage = ({ data }) => {
       const item = pending.get(data.id);
-      if (!item) return;
+      if (!item || data.id !== workerActiveId) return;
       if (data.type === "progress") {
         const d = data.detail;
         status(
@@ -233,9 +302,15 @@ function runWorker(action, text, source, target, signal) {
         );
       } else {
         pending.delete(data.id);
+        workerActiveId = null;
         item.cleanup();
-        if (data.type === "error") item.reject(new Error(data.message));
-        else item.resolve(data.result);
+        if (data.type === "error") {
+          const error = new Error(data.message);
+          if (data.code === "LOCAL_TRANSLATION_INCOMPLETE")
+            error.code = data.code;
+          item.reject(error);
+        } else item.resolve(data.result);
+        pumpWorker();
       }
     };
     worker.onerror = () => {
@@ -248,26 +323,51 @@ function runWorker(action, text, source, target, signal) {
         );
       }
       pending.clear();
-      worker?.terminate();
-      worker = null;
+      stopWorker();
     };
   }
+  workerActiveId = id;
+  try {
+    worker.postMessage(next.request);
+  } catch (error) {
+    pending.delete(id);
+    next.cleanup();
+    next.reject(error);
+    stopWorker();
+    pumpWorker();
+  }
+}
+function runWorker(action, text, source, target, signal) {
+  checkAbort(signal);
   const id = ++workerId;
   return new Promise((resolve, reject) => {
     const abort = () => {
-      worker?.terminate();
-      worker = null;
-      for (const item of pending.values()) {
-        item.cleanup();
-        item.reject(new DOMException("中止しました", "AbortError"));
+      const item = pending.get(id);
+      if (!item) return;
+      pending.delete(id);
+      item.cleanup();
+      item.reject(
+        signal?.reason || new DOMException("中止しました", "AbortError"),
+      );
+      // A queued cancellation must not kill another request's running model.
+      // Active WASM work is stopped by termination, then remaining jobs restart
+      // from the browser cache in a fresh worker. Old results cannot be reused.
+      if (workerActiveId === id) {
+        stopWorker();
+        status("中止しました。");
+        pumpWorker();
       }
-      pending.clear();
-      status("中止しました。");
     };
     const cleanup = () => signal?.removeEventListener("abort", abort);
-    pending.set(id, { resolve, reject, cleanup });
+    pending.set(id, {
+      resolve,
+      reject,
+      cleanup,
+      request: { id, action, text, source, target },
+    });
     signal?.addEventListener("abort", abort, { once: true });
-    worker.postMessage({ id, action, text, source, target });
+    if (signal?.aborted) abort();
+    else pumpWorker();
   });
 }
 async function browserTranslator(source, target, signal) {
@@ -299,8 +399,35 @@ export async function translate(
 ) {
   checkAbort(signal);
   if (!text?.trim()) return "";
+  source = source.split("-")[0];
   target = target.split("-")[0];
-  const currentEngine = state.engine;
+  // One translation keeps the chosen endpoint/consent even if settings change
+  // while a long PDF block is being translated. Nothing is persisted.
+  const connection = { ...state };
+  const options = { source, target, signal };
+  if (!["wasm", "browser"].includes(connection.engine) && text.length > 3000) {
+    const units = providerChunks(text);
+    const translated = [];
+    for (const [i, unit] of units.entries()) {
+      checkAbort(signal);
+      const gap = !i
+        ? unit.gap
+        : /[\r\n]/.test(unit.gap)
+          ? unit.gap
+          : ["ja", "zh"].includes(target)
+            ? ""
+            : " ";
+      translated.push(
+        gap + (await translateOne(unit.text, options, connection)),
+      );
+    }
+    return translated.join("").trim();
+  }
+  return translateOne(text, options, connection);
+}
+async function translateOne(text, { source, target, signal }, connection) {
+  checkAbort(signal);
+  const currentEngine = connection.engine;
   let result;
   if (currentEngine === "browser") {
     let src = source;
@@ -338,8 +465,8 @@ export async function translate(
     if (src === target) return text;
     result = await runWorker("translate", text, src, target, signal);
   } else if (["plamo", "gemma", "ollama"].includes(currentEngine)) {
-    const endpoint = localOnlyEndpoint();
-    const model = state.model.trim();
+    const endpoint = localOnlyEndpoint(connection.endpoint);
+    const model = connection.model.trim();
     if (!model) fail("Ollamaのモデル名を指定してください。");
     if (/cloud/i.test(model))
       fail("クラウドモデルはローカル接続に指定できません。");
@@ -374,25 +501,34 @@ export async function translate(
     }
     const data = await companion(
       "/api/bridge",
-      { provider: "ollama", endpoint, action: "chat", model, messages },
+      {
+        provider: "ollama",
+        endpoint,
+        action: "chat",
+        model,
+        messages,
+        profile: currentEngine,
+      },
       signal,
     );
     if (data.done_reason === "length")
       fail(
         "モデルの出力上限に達しました。文章を短く区切って再試行してください。",
       );
+    if (data.done !== true)
+      fail("モデルの応答が完了しませんでした。途中の訳文は採用していません。");
     result = data.message?.content;
   } else {
-    if (!state.consent)
+    if (!connection.consent)
       fail("設定で原文の外部送信先を確認し、送信を許可してください。");
     if (currentEngine === "google") {
-      if (!state.googleKey.trim())
+      if (!connection.googleKey.trim())
         fail("ご自身のGoogle Cloud APIキーを入力してください。");
       const data = await companion(
         "/api/bridge",
         {
           provider: "google",
-          key: state.googleKey.trim(),
+          key: connection.googleKey.trim(),
           text,
           source,
           target,
@@ -401,14 +537,14 @@ export async function translate(
       );
       result = data.data?.translations?.[0]?.translatedText;
     } else {
-      if (!state.gasSecret || !state.gasUrl)
+      if (!connection.gasSecret || !connection.gasUrl)
         fail("Apps ScriptのURLと接続用シークレットを入力してください。");
       const data = await companion(
         "/api/bridge",
         {
           provider: "gas",
-          endpoint: state.gasUrl.trim(),
-          secret: state.gasSecret,
+          endpoint: connection.gasUrl.trim(),
+          secret: connection.gasSecret,
           text,
           source,
           target,
@@ -555,7 +691,7 @@ function render() {
     mounted.append(element("code", { className: "engine-command" }, command));
   }
   if (state.engine === "google")
-    field(mounted, "Google Cloud APIキー · この画面のみ保持", "googleKey", {
+    field(mounted, "Google Cloud APIキー · このタブのメモリのみ", "googleKey", {
       type: "password",
       placeholder: "APIキーを入力",
     });
@@ -563,7 +699,7 @@ function render() {
     field(mounted, "自分のApps Script WebアプリURL", "gasUrl", {
       placeholder: "https://script.google.com/macros/s/…/exec",
     });
-    field(mounted, "接続用シークレット · この画面のみ保持", "gasSecret", {
+    field(mounted, "接続用シークレット · このタブのメモリのみ", "gasSecret", {
       type: "password",
     });
     const link = element(

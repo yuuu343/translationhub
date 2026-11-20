@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import http.client
 import json
+import re
 import secrets
+import select
+import socket
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +21,149 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 MAX_BODY = 2 * 1024 * 1024
+MAX_RESPONSE = 8 * 1024 * 1024
+PROVIDER_TIMEOUT = 180
+
+
+class RequestCancelled(Exception):
+    pass
+
+
+class RequestScope:
+    """Close upstream sockets when the browser leaves or the deadline expires."""
+    def __init__(self, client, timeout=PROVIDER_TIMEOUT):
+        self.client = client
+        self.deadline = time.monotonic() + timeout
+        self.finished = threading.Event()
+        self.lock = threading.Lock()
+        self.sockets = []
+        self.reason = None
+        self.disconnected = False
+
+    def __enter__(self):
+        threading.Thread(target=self.watch, daemon=True).start()
+        return self
+
+    def __exit__(self, *_):
+        self.finished.set()
+
+    def check(self):
+        if self.reason:
+            raise RequestCancelled(self.reason)
+
+    def attach(self, upstream):
+        with self.lock:
+            self.sockets.append(upstream)
+            cancelled = self.reason
+        if cancelled:
+            upstream.close()
+            self.check()
+
+    def cancel(self, reason):
+        with self.lock:
+            if self.reason:
+                return
+            self.reason = reason
+            upstreams = list(self.sockets)
+        for upstream in upstreams:
+            try:
+                upstream.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            upstream.close()
+
+    def watch(self):
+        while not self.finished.wait(.1):
+            if time.monotonic() >= self.deadline:
+                self.cancel('翻訳先の応答が時間内に完了しませんでした。文章を短くして再試行してください。')
+                return
+            try:
+                ready, _, _ = select.select([self.client], [], [], 0)
+                if ready and not self.client.recv(1, socket.MSG_PEEK):
+                    self.disconnected = True
+                    self.cancel('中止しました。送信済みのクラウド処理・料金は取り消せない場合があります。')
+                    return
+            except (OSError, ValueError):
+                self.disconnected = True
+                self.cancel('中止しました。')
+                return
+
+
+class ScopedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, *args, scope=None, **kwargs):
+        self.scope = scope
+        super().__init__(*args, **kwargs)
+
+    def connect(self):
+        if self.scope:
+            self.scope.check()
+        super().connect()
+        if self.scope:
+            self.scope.attach(self.sock)
+
+
+class ScopedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *args, scope=None, **kwargs):
+        self.scope = scope
+        super().__init__(*args, **kwargs)
+
+    def connect(self):
+        if self.scope:
+            self.scope.check()
+        super().connect()
+        if self.scope:
+            self.scope.attach(self.sock)
+
+
+class ScopedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, scope):
+        self.scope = scope
+        super().__init__()
+
+    def http_open(self, req):
+        return self.do_open(lambda *a, **kw: ScopedHTTPConnection(*a, scope=self.scope, **kw), req)
+
+
+class ScopedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, scope):
+        self.scope = scope
+        super().__init__()
+
+    def https_open(self, req):
+        return self.do_open(lambda *a, **kw: ScopedHTTPSConnection(*a, scope=self.scope, **kw), req,
+                            context=self._context)
+
+
+def ollama_options(info, messages, profile):
+    metadata = info.get('model_info') or {}
+    architecture = metadata.get('general.architecture', '')
+    context = metadata.get(f'{architecture}.context_length', 8192)
+    if not isinstance(context, int) or context <= 0:
+        context = 8192
+    # PLaMo's training window is 32K even when GGUF advertises extrapolation.
+    maximum = min(context, 32768)
+    output = min(4096, maximum // 2)
+    # UTF-8 bytes conservatively bound common byte-fallback tokenizers. The
+    # runtime also receives truncate:false / shift:false as the final guard.
+    required = sum(len(m['content'].encode('utf-8')) for m in messages) + 1024 + output
+    if required > maximum:
+        raise ValueError('原文と訳文がモデルの文脈上限を超える可能性があります。文章を短く区切ってください。')
+    context = min(maximum, max(8192, 1 << (required - 1).bit_length()))
+    options = {'temperature': 0, 'num_ctx': context, 'num_predict': output}
+    if profile == 'plamo':
+        options['stop'] = ['<|plamo:tag|>', '<|plamo:bos|>']
+    return options
+
+
+def translation_fields(data):
+    text, source, target = data.get('text'), data.get('source', 'auto'), data.get('target', 'ja')
+    if not isinstance(text, str) or not text.strip() or len(text) > 3000:
+        raise ValueError('1回の送信は1〜3000文字にしてください。長い文章は分割してください。')
+    code = r'[a-z]{2,3}(?:-[A-Za-z]{2,4})?'
+    if (not isinstance(target, str) or not re.fullmatch(code, target) or
+        (source not in (None, '', 'auto') and (not isinstance(source, str) or not re.fullmatch(code, source)))):
+        raise ValueError('翻訳元・翻訳先の言語コードを確認してください。')
+    return text, source, target
 
 
 class SafeRedirect(urllib.request.HTTPRedirectHandler):
@@ -130,13 +278,24 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError('Invalid request')
-            result = self.forward(data)
+            with RequestScope(self.connection) as scope:
+                self.request_scope = scope
+                try:
+                    result = self.forward(data)
+                except Exception:
+                    scope.check()
+                    raise
+                scope.check()
             return self.json_response(200, result)
+        except RequestCancelled as error:
+            if getattr(self, 'request_scope', None) and self.request_scope.disconnected:
+                return
+            return self.json_response(408, {'error': str(error)})
         except urllib.error.HTTPError as error:
             # Provider responses can contain echoes; redact credentials before surfacing details.
             detail = ''
             try:
-                payload = json.loads(error.read(65536))
+                payload = json.loads(getattr(error, 'translationhub_body', b''))
                 info = payload.get('error', '')
                 detail = info.get('message', '') if isinstance(info, dict) else str(info)
                 for secret in (data.get('key', ''), data.get('secret', '')):
@@ -145,7 +304,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception:
                 pass
             return self.json_response(502, {'error': f'翻訳先がエラーを返しました ({error.code})。{detail[:500]}'})
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
             return self.json_response(502, {'error': '翻訳先に接続できませんでした。Ollamaの起動状態・接続先・ネット接続を確認してください。'})
         except (ValueError, KeyError, TypeError) as error:
             return self.json_response(400, {'error': str(error)[:400]})
@@ -176,11 +335,31 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response(400, {'error': str(error)[:400]})
 
     def request_json(self, url, payload=None, headers=None, gas=False):
+        scope = getattr(self, 'request_scope', None)
+        if scope:
+            scope.check()
         req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8') if payload is not None else None,
                                      headers={'Content-Type': 'application/json', **(headers or {})})
-        opener = urllib.request.build_opener(SafeRedirect() if gas else NoRedirect())
-        with opener.open(req, timeout=180) as response:
-            raw = response.read(8 * 1024 * 1024)
+        handlers = [SafeRedirect() if gas else NoRedirect(), ScopedHTTPHandler(scope), ScopedHTTPSHandler(scope)]
+        if urllib.parse.urlparse(url).hostname in {'127.0.0.1', 'localhost', '::1'}:
+            # A system HTTP_PROXY must not route local-model text off-device.
+            handlers.append(urllib.request.ProxyHandler({}))
+        opener = urllib.request.build_opener(*handlers)
+        try:
+            with opener.open(req, timeout=PROVIDER_TIMEOUT) as response:
+                raw = response.read(MAX_RESPONSE + 1)
+        except urllib.error.HTTPError as error:
+            # Read bounded error details while the cancellation/deadline scope
+            # is still active, never after its watcher has already stopped.
+            try:
+                error.translationhub_body = error.read(65536)
+            finally:
+                error.close()
+            raise
+        if scope:
+            scope.check()
+        if len(raw) > MAX_RESPONSE:
+            raise ValueError('翻訳先の応答が大きすぎます。文章を短く区切ってください。')
         try:
             result = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -195,7 +374,11 @@ class Handler(SimpleHTTPRequestHandler):
             parsed = urllib.parse.urlparse(data.get('endpoint', ''))
             if parsed.scheme != 'http' or parsed.hostname not in {'127.0.0.1', 'localhost', '::1'} or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {'', '/'}:
                 raise ValueError('Ollamaの接続先はこの端末のHTTPサーバーに限定されています。')
-            endpoint = f'http://127.0.0.1:{parsed.port or 11434}'
+            port = parsed.port if parsed.port is not None else 80
+            if port == 0:
+                raise ValueError('Ollamaの接続先ポートは1〜65535で指定してください。')
+            host = '[::1]' if parsed.hostname == '::1' else '127.0.0.1'
+            endpoint = f'http://{host}:{port}'
             if data.get('action') == 'tags':
                 return self.request_json(endpoint + '/api/tags')
             if data.get('action') != 'chat':
@@ -207,28 +390,43 @@ class Handler(SimpleHTTPRequestHandler):
             if info.get('remote_host') or info.get('remote_model'):
                 raise ValueError('クラウドモデルへの送信はローカル接続では許可されていません。')
             messages = data.get('messages')
-            if not isinstance(messages, list) or not 1 <= len(messages) <= 3:
+            if (not isinstance(messages, list) or not 1 <= len(messages) <= 3 or
+                any(not isinstance(m, dict) or m.get('role') not in {'system', 'user', 'assistant'} or
+                    not isinstance(m.get('content'), str) for m in messages)):
                 raise ValueError('Invalid messages')
-            return self.request_json(endpoint + '/api/chat', {
-                'model': model, 'messages': messages, 'stream': False,
-                'options': {'temperature': 0, 'num_ctx': 8192, 'num_predict': 4096},
+            options = ollama_options(info, messages, data.get('profile'))
+            result = self.request_json(endpoint + '/api/chat', {
+                'model': model, 'messages': messages, 'stream': False, 'truncate': False, 'shift': False,
+                'options': options,
             })
+            if result.get('error'):
+                return result
+            if result.get('done') is not True:
+                raise ValueError('モデルの応答が完了しませんでした。途中の訳文は採用していません。')
+            if result.get('done_reason') == 'length' or result.get('eval_count', 0) >= options['num_predict']:
+                raise ValueError('モデルの出力上限に達しました。文章を短く区切って再試行してください。')
+            return result
         if provider == 'google':
             key = data.get('key', '')
             if not isinstance(key, str) or not key.strip() or '\n' in key or '\r' in key:
                 raise ValueError('Google Cloud APIキーを確認してください。')
-            payload = {'q': [str(data.get('text', ''))], 'target': str(data.get('target', 'ja')), 'format': 'text'}
-            if data.get('source') not in {None, '', 'auto'}:
-                payload['source'] = str(data['source'])
+            text, source, target = translation_fields(data)
+            payload = {'q': [text], 'target': target, 'format': 'text'}
+            if source not in {None, '', 'auto'}:
+                payload['source'] = source
             return self.request_json('https://translation.googleapis.com/language/translate/v2', payload,
                                      {'X-Goog-Api-Key': key.strip()})
         if provider == 'gas':
+            text, source, target = translation_fields(data)
+            secret = data.get('secret')
+            if not isinstance(secret, str) or len(secret) < 32:
+                raise ValueError('Apps Scriptの接続用シークレットは32文字以上で設定してください。')
             endpoint = data.get('endpoint', '')
             parsed = urllib.parse.urlparse(endpoint)
             if parsed.scheme != 'https' or parsed.hostname != 'script.google.com' or parsed.username or parsed.password or parsed.query or parsed.fragment or not parsed.path.startswith('/macros/s/') or not parsed.path.endswith('/exec'):
                 raise ValueError('Apps Scriptの /exec で終わる公開URLを指定してください。')
-            return self.request_json(endpoint, {'secret': data.get('secret'), 'text': data.get('text'),
-                                                'source': data.get('source'), 'target': data.get('target')}, gas=True)
+            return self.request_json(endpoint, {'secret': secret, 'text': text,
+                                                'source': source, 'target': target}, gas=True)
         raise ValueError('Unknown provider')
 
 

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   segmentText,
+  sentenceRanges,
   modelText,
   translatedGap,
   validateDocument,
@@ -249,21 +250,35 @@ test("lists, titles, tables, fenced code and quote lines retain their structure"
   assertExactOffsets(text, segments);
   assert.deepEqual(
     segments.map((s) => s.kind),
-    ["heading", "list", "list", "table", "code", "quote", "separator", "list"],
+    [
+      "heading",
+      "list",
+      "list",
+      "table",
+      "table",
+      "table",
+      "code",
+      "quote",
+      "separator",
+      "list",
+    ],
   );
   assert.equal(
     modelText(segments[1], "en"),
     "- First item has a wrapped continuation.",
   );
   assert.equal(
-    modelText(segments[3], "en"),
+    segments
+      .filter((s) => s.kind === "table")
+      .map((s) => modelText(s, "en"))
+      .join("\n"),
     "Year  Revenue\n2025  120\n2024  96",
   );
   assert.equal(
-    modelText(segments[4], "en"),
+    modelText(segments[6], "en"),
     "```js\nconst a = 1;\n\nconst b = 2;\n```",
   );
-  assert.equal(modelText(segments[5], "en"), "> line one line two");
+  assert.equal(modelText(segments[7], "en"), "> line one line two");
   assert.equal(
     segmentText("- Follow these instructions\ncarefully.", "en")[0].kind,
     "list",
@@ -407,4 +422,251 @@ test("sentence units inside wrapped block quotes preserve paragraph breaks and d
   );
   assert.equal(segments[1].softGap, true);
   assert.equal(segments[2].softGap, undefined);
+});
+
+test("technical prose keeps inline norms, single tabs, decimal values and numbered references in complete sentences", () => {
+  const text =
+    "Dr. Chen measured 3.5 V. The\tresidual |x| and ||y|| remain\nbelow 0.05 in Eq. (2). See Fig. 3 for details.";
+  const expected = [
+    "Dr. Chen measured 3.5 V.",
+    "The residual |x| and ||y|| remain below 0.05 in Eq. (2).",
+    "See Fig. 3 for details.",
+  ];
+  const segments = segmentText(text, "en", { granularity: "sentence" });
+  assertExactOffsets(text, segments);
+  assert(segments.every((s) => s.kind === "paragraph"));
+  assert.deepEqual(
+    segments.map((s) => modelText(s, "en")),
+    expected,
+  );
+  // The worker must be able to apply the same boundary function again unchanged.
+  for (const sentence of expected)
+    assert.deepEqual(sentenceRanges(sentence, "en"), [[0, sentence.length]]);
+});
+
+test("financial prose does not turn redundant spaces into columns or split decimal amounts", () => {
+  const text =
+    "Net  revenue rose  3.5% to $1,200.50 million.\r\nAdjusted EPS was $1.25 vs. $1.20 a year earlier.\r\nCash flow was -€96.25 million.";
+  const segments = segmentText(text, "en", { granularity: "sentence" });
+  assertExactOffsets(text, segments);
+  assert(segments.every((s) => s.kind === "paragraph"));
+  const outgoing = segments.map((s) => modelText(s, "en"));
+  assert.deepEqual(outgoing, [
+    "Net revenue rose 3.5% to $1,200.50 million.",
+    "Adjusted EPS was $1.25 vs. $1.20 a year earlier.",
+    "Cash flow was -€96.25 million.",
+  ]);
+  assert.deepEqual(
+    outgoing.join(" ").match(/[-€$]*\d[\d,.]*%?/g),
+    text.match(/[-€$]*\d[\d,.]*%?/g),
+  );
+});
+
+test("numbered and alphabetical list markers stay with their item rather than becoming model calls", () => {
+  for (const text of [
+    "1. Review the 2025 results.\n2. Compare cash flow.",
+    "A. Review revenue.\nB. Review costs.",
+    "a. Read the report.\nb. Check the figures.",
+  ]) {
+    const segments = segmentText(text, "en", { granularity: "sentence" });
+    assertExactOffsets(text, segments);
+    assert.deepEqual(
+      segments.map((s) => modelText(s, "en")),
+      text.split("\n"),
+    );
+    assert(segments.every((s) => s.kind === "list"));
+  }
+});
+
+test("explicit section headings remain distinct while bare CJK phrases are not guessed to be headings", () => {
+  const text =
+    "2.1 Experimental setup\nThe CPU used 3.3 V.\n第2章 実験結果\nGPUの温度は65度だった。\n【考察】\nAPIの応答時間は短い。";
+  const segments = segmentText(text, "ja");
+  assertExactOffsets(text, segments);
+  assert.deepEqual(
+    segments.map((s) => s.kind),
+    ["heading", "paragraph", "heading", "paragraph", "heading", "paragraph"],
+  );
+  assert.deepEqual(
+    segments.map((s) => modelText(s, "ja")),
+    text.split("\n"),
+  );
+  const wrapped = "結果は\nGPUの使用率によって変わる。";
+  assert.equal(
+    modelText(segmentText(wrapped, "ja")[0], "ja"),
+    "結果はGPUの使用率によって変わる。",
+  );
+});
+
+test("Unicode line and paragraph separators preserve raw offsets and their different meanings", () => {
+  const text =
+    "Cafe\u0301 revenue\u2028rose 3.5%.\u2029利益は\u0085GPU部門で増加した。\fNext page.\n";
+  const segments = segmentText(text, "ja");
+  assertExactOffsets(text, segments);
+  assert.deepEqual(
+    segments.map((s) => modelText(s, "ja")),
+    [
+      "Cafe\u0301 revenue rose 3.5%.",
+      "利益はGPU部門で増加した。",
+      "Next page.",
+    ],
+  );
+  assert.equal(segments[1].gap, "\u2029");
+  assert.equal(segments[2].gap, "\f");
+  segments[0].target = "Cafe\u0301の売上高";
+  segments[0].links = [[0, 5, 0, 5]];
+  const saved = validateDocument(
+    JSON.parse(
+      JSON.stringify({
+        format: "translationhub.text",
+        version: 1,
+        from: "ja",
+        to: "en",
+        text,
+        segments,
+      }),
+    ),
+  );
+  assertExactOffsets(text, saved.segments);
+  assert.deepEqual(saved.segments[0].links, [[0, 5, 0, 5]]);
+  assert.equal(saved.segments[0].source.slice(0, 5), "Cafe\u0301");
+});
+
+test("honorifics in French and German stay attached to names without swallowing a sentence ending in a unit", () => {
+  for (const [lang, text, expected] of [
+    [
+      "fr",
+      "M. Dupont a mesuré 3,5 V. Le résultat reste stable.",
+      ["M. Dupont a mesuré 3,5 V.", "Le résultat reste stable."],
+    ],
+    [
+      "de",
+      "Dr. Weber misst 3,5 V. Die CPU bleibt kühl.",
+      ["Dr. Weber misst 3,5 V.", "Die CPU bleibt kühl."],
+    ],
+    [
+      "en",
+      "Prof. Lee measured 6 W. Revenue grew 2%.",
+      ["Prof. Lee measured 6 W.", "Revenue grew 2%."],
+    ],
+  ]) {
+    const segments = segmentText(text, lang, { granularity: "sentence" });
+    assertExactOffsets(text, segments);
+    assert.deepEqual(
+      segments.map((s) => modelText(s, lang)),
+      expected,
+    );
+    assert(segments.every((s) => s.kind === "paragraph"));
+  }
+  // Ambiguous country abbreviations must not be joined unconditionally.
+  assert.deepEqual(
+    sentenceRanges("It operates in the U.S. Revenue grew 2%.", "en").map(
+      ([a, b]) => "It operates in the U.S. Revenue grew 2%.".slice(a, b),
+    ),
+    ["It operates in the U.S.", "Revenue grew 2%."],
+  );
+});
+
+test("clear TSV, Markdown and aligned numeric tables use complete rows with all cell delimiters", () => {
+  for (const text of [
+    "\tRegion\tRevenue\t\n\tEMEA\t120\t\n\tAPAC\t96\t",
+    "| Region | Revenue |\n| :--- | ---: |\n| EMEA | 120 |\n| APAC | 96 |",
+    "Region  Revenue\nEMEA    120\nAPAC    96",
+  ]) {
+    const rows = text.split("\n");
+    const segments = segmentText(text, "en", {
+      granularity: "sentence",
+      maxChars: 8,
+    });
+    assertExactOffsets(text, segments);
+    assert.deepEqual(
+      segments.map((s) => s.source),
+      rows,
+    );
+    assert.deepEqual(
+      segments.map((s) => modelText(s, "en")),
+      rows,
+    );
+    assert(segments.every((s) => s.kind === "table"));
+  }
+  const code = "```js\nconst message = 'a long literal value';\n```";
+  assert.equal(segmentText(code, "en", { maxChars: 8 }).length, 1);
+});
+
+test("budget boundaries keep normal combining characters and emoji sequences intact when they fit", () => {
+  const text = "cafe\u0301 👩🏽‍💻 最適化を確認 ".repeat(30);
+  const boundaries = new Set(
+    [
+      ...new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(text),
+    ].map((s) => s.index),
+  );
+  boundaries.add(text.length);
+  const segments = segmentText(text, "ja", {
+    granularity: "paragraph",
+    maxChars: 31,
+  });
+  assertExactOffsets(text, segments);
+  let offset = 0;
+  for (const s of segments) {
+    offset += s.gap.length;
+    assert(boundaries.has(offset));
+    offset += s.source.length;
+    assert(boundaries.has(offset));
+    assert(modelText(s, "ja").length <= 31);
+  }
+});
+
+test("fallback sentence boundaries preserve decimals, references and names when Intl.Segmenter is unavailable", () => {
+  const original = Intl.Segmenter;
+  try {
+    Intl.Segmenter = undefined;
+    const text = "Dr. Lee measured 3.5 V. See Eq. (2).";
+    assert.deepEqual(
+      sentenceRanges(text, "en").map(([a, b]) => text.slice(a, b)),
+      ["Dr. Lee measured 3.5 V.", "See Eq. (2)."],
+    );
+  } finally {
+    Intl.Segmenter = original;
+  }
+});
+
+test("closed inline code and math preserve their spelling, spacing and sentence-like punctuation", () => {
+  const text =
+    "The log contains `phase one.  Phase two` and\nthe identity \\(a = 1.  B = 2\\) remains valid. Next sentence.";
+  const expected = [
+    "The log contains `phase one.  Phase two` and the identity \\(a = 1.  B = 2\\) remains valid.",
+    "Next sentence.",
+  ].map((s) => s);
+  const segments = segmentText(text, "en", { granularity: "sentence" });
+  assertExactOffsets(text, segments);
+  assert.deepEqual(
+    segments.map((s) => modelText(s, "en")),
+    expected,
+  );
+  for (const value of expected)
+    assert.deepEqual(sentenceRanges(value, "en"), [[0, value.length]]);
+});
+
+test("a closed display formula retains internal line breaks and blank lines", () => {
+  const formula = "\\[\n E = m c^2\n\n\\]";
+  const text = `The identity ${formula} is retained. Next sentence.`;
+  const segments = segmentText(text, "en", { granularity: "sentence" });
+  assertExactOffsets(text, segments);
+  assert.deepEqual(
+    segments.map((s) => modelText(s, "en")),
+    [`The identity ${formula} is retained.`, "Next sentence."],
+  );
+});
+
+test("character budgets keep a closed literal whole for the downstream placeholder adapter", () => {
+  const literal = "`phase one.  phase two; phase three`";
+  const text = `Read the log ${literal} before interpreting the result.`;
+  const segments = segmentText(text, "en", {
+    granularity: "paragraph",
+    maxChars: 24,
+  });
+  assertExactOffsets(text, segments);
+  const outgoing = segments.map((s) => modelText(s, "en"));
+  assert.equal(outgoing.filter((s) => s.includes(literal)).length, 1);
+  assert(outgoing.every((s) => s.length <= 24 || s === literal));
 });

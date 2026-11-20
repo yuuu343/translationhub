@@ -15,11 +15,13 @@ function doPost(e) {
     if (!expected || expected.length < 32) return respond_({error: 'Set a strong TRANSLATIONHUB_SECRET in Script Properties.'});
     const data = JSON.parse(e.postData.contents);
     if (typeof data.secret !== 'string' || !constantEqual_(data.secret, expected)) return respond_({error: 'Invalid connection secret.'});
-    if (typeof data.text !== 'string' || data.text.length > 30000) return respond_({error: 'Text must be shorter than 30,000 characters.'});
+    // The web client splits long passages before each request, so one Apps
+    // Script execution never loops over a document or returns a partial result.
+    if (typeof data.text !== 'string' || !data.text.trim() || data.text.length > 3000) return respond_({error: 'Send 1–3,000 characters per request; split longer passages first.'});
     const source = data.source === 'auto' ? '' : String(data.source || '');
     const target = String(data.target || 'ja');
     if (!/^[a-z]{0,3}(?:-[A-Za-z]{2,4})?$/.test(source) || !/^[a-z]{2,3}(?:-[A-Za-z]{2,4})?$/.test(target)) return respond_({error: 'Invalid language code.'});
-    return respond_({translation: LanguageApp.translate(data.text, source, target)});
+    return respond_({translation: LanguageApp.translate(data.text, source, target, {contentType: 'text'})});
   } catch (error) {
     // Do not log or echo the source text or secret, even on an error.
     return respond_({error: 'Translation failed. Check LanguageApp quota and language codes.'});

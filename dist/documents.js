@@ -1,3 +1,6 @@
+import { explicitLiteralRanges } from "./text-literals.js";
+import { normalizeEngineIdentity } from "./engine-identity.js";
+
 export const languages = {
   en: "英語",
   ja: "日本語",
@@ -15,7 +18,7 @@ export const languages = {
 export function translatedGap(s, i, lang) {
   if (typeof s.targetGap === "string") return s.targetGap;
   if (i && s.softGap === true) return ["ja", "zh"].includes(lang) ? "" : " ";
-  if (!i || /[\r\n]/.test(s.gap)) return s.gap;
+  if (!i || /[\r\n\u0085\u2028\u2029\f]/.test(s.gap)) return s.gap;
   return ["ja", "zh"].includes(lang) ? "" : s.gap || " ";
 }
 // Segment boundaries refer to the untouched source. Only modelText normalizes
@@ -39,10 +42,17 @@ const nameWord =
 function sourceLines(text) {
   const result = [];
   let offset = 0;
-  for (const m of text.matchAll(/[^\r\n]*(?:\r\n|\r|\n|$)/g)) {
+  for (const m of text.matchAll(
+    /[^\r\n\u0085\u2028\u2029\f]*(?:\r\n|[\r\n\u0085\u2028\u2029\f]|$)/g,
+  )) {
     if (!m[0]) continue;
-    const body = m[0].replace(/(?:\r\n|\r|\n)$/, "");
-    result.push({ start: offset, end: offset + body.length, body });
+    const body = m[0].replace(/(?:\r\n|[\r\n\u0085\u2028\u2029\f])$/, "");
+    result.push({
+      start: offset,
+      end: offset + body.length,
+      body,
+      break: m[0].slice(body.length),
+    });
     offset += m[0].length;
   }
   return result;
@@ -65,7 +75,23 @@ function lineKind(line) {
   const s = line.trim();
   if (/^#{1,6}\s+/.test(s)) return "heading";
   if (/^(?:[-*_]\s*){3,}$/.test(s)) return "separator";
-  if (/^(?:[-*+•‣▪]\s+|(?:\d+|[a-zA-Z])[.)]\s+|[（(]\d+[）)]\s+)/u.test(s))
+  if (
+    s.length <= 80 &&
+    !/[.!?。！？]$/.test(s) &&
+    (/^\d+(?:\.\d+)+(?:[.)])?\s+(?:[\p{Lu}][\p{L}]{1,}|[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}])/u.test(
+      s,
+    ) ||
+      /^第[0-9０-９一二三四五六七八九十百]+[章節部項](?:[ \t　:：]|$)/u.test(
+        s,
+      ) ||
+      /^【[^【】\r\n]{1,40}】$/.test(s))
+  )
+    return "heading";
+  if (
+    /^(?:[-*+•‣▪]\s+|(?:\d+[.)]|[a-z][.)]|[A-Z]\))\s+|[（(]\d+[）)]\s+)/u.test(
+      s,
+    )
+  )
     return "list";
   if (/^>/.test(s)) return "quote";
   if (
@@ -75,7 +101,9 @@ function lineKind(line) {
     )
   )
     return "code";
-  if (/\t/.test(s) || (s.match(/\|/g) || []).length >= 2) return "table";
+  if (/^\|.*\|$/.test(s) && s.split("|").filter((c) => c.trim()).length >= 2)
+    return "table";
+  if (/^\|?\s*:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)+\s*\|?$/.test(s)) return "table";
   return "paragraph";
 }
 
@@ -125,10 +153,46 @@ function spaceTablePair(a, b) {
   return left.slice(1).some(numeric) || right.slice(1).some(numeric);
 }
 
+function delimitedTablePair(a, b) {
+  if (!a?.trim() || !b?.trim()) return false;
+  const tabs = (line) => line.trim().split(/\t+/);
+  if (a.includes("\t") && b.includes("\t")) {
+    const left = tabs(a),
+      right = tabs(b);
+    if (left.length >= 2 && left.length === right.length) return true;
+  }
+  const pipes = (line) => line.trim().split(/\s+\|\s+/);
+  const left = pipes(a),
+    right = pipes(b);
+  return left.length >= 2 && left.length === right.length;
+}
+
+function alphabeticalListPair(a, b) {
+  const left = a?.trim().match(/^([A-Za-z])\.\s+\S/),
+    right = b?.trim().match(/^([A-Za-z])\.\s+\S/);
+  return (
+    !!left && !!right && right[1].charCodeAt(0) - left[1].charCodeAt(0) === 1
+  );
+}
+
+function containingLiteral(ranges, offset) {
+  let low = 0,
+    high = ranges.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1,
+      range = ranges[middle];
+    if (offset < range[0]) high = middle - 1;
+    else if (offset >= range[1]) low = middle + 1;
+    else return range;
+  }
+  return null;
+}
+
 function rawUnits(text) {
   const lines = sourceLines(text),
     units = [];
-  const previousContent = [];
+  const previousContent = [],
+    literals = explicitLiteralRanges(text);
   let lastContent = -1,
     previousText = "";
   lines.forEach((line, i) => {
@@ -155,6 +219,11 @@ function rawUnits(text) {
       }
       continue;
     }
+    const continuedLiteral = containingLiteral(literals, line.start);
+    if (current && continuedLiteral && continuedLiteral[0] < line.start) {
+      current.end = line.end;
+      continue;
+    }
     const opening = trimmed.match(/^(`{3,}|~{3,})/);
     if (opening) {
       flush();
@@ -166,7 +235,14 @@ function rawUnits(text) {
       flush();
       continue;
     }
+    if (i && /[\u2029\f]/.test(lines[i - 1].break)) flush();
     let kind = lineKind(line.body);
+    if (
+      kind === "paragraph" &&
+      (alphabeticalListPair(lines[i - 1]?.body, line.body) ||
+        alphabeticalListPair(line.body, lines[i + 1]?.body))
+    )
+      kind = "list";
     const previousNonempty = previousContent[i];
     const isolatedTail = !lines[i - 1]?.body.trim() && i === lastContent;
     const followsQuotation =
@@ -183,7 +259,9 @@ function rawUnits(text) {
     if (
       kind === "paragraph" &&
       (spaceTablePair(line.body, lines[i - 1]?.body) ||
-        spaceTablePair(line.body, lines[i + 1]?.body))
+        spaceTablePair(line.body, lines[i + 1]?.body) ||
+        delimitedTablePair(line.body, lines[i - 1]?.body) ||
+        delimitedTablePair(line.body, lines[i + 1]?.body))
     )
       kind = "table";
     if (
@@ -195,7 +273,7 @@ function rawUnits(text) {
     const sameStructure =
       current &&
       kind === current.kind &&
-      ["paragraph", "table", "quote", "code"].includes(kind);
+      ["paragraph", "quote", "code"].includes(kind);
     const listContinuation =
       current?.kind === "list" &&
       kind === "paragraph" &&
@@ -209,6 +287,7 @@ function rawUnits(text) {
   }
   flush();
   return units.map((u) => {
+    if (u.kind === "table") return u;
     const value = text.slice(u.start, u.end);
     const leading = value.length - value.trimStart().length;
     return {
@@ -234,12 +313,17 @@ function normalizedSource(source, language, kind = "paragraph", options = {}) {
       );
     }
   };
-  if (["code", "table", "separator"].includes(kind)) {
+  if (kind === "table") {
+    append(source, 0, source.length);
+    return { text: chunks.join(""), starts, ends };
+  }
+  if (["code", "heading", "separator"].includes(kind)) {
     const begin = source.length - source.trimStart().length,
       end = source.trimEnd().length;
     append(source.slice(begin, end), begin, end);
     return { text: chunks.join(""), starts, ends };
   }
+  const literals = explicitLiteralRanges(source);
   let quotedStart = true;
   const lines = sourceLines(source)
     .map((line) => {
@@ -272,6 +356,7 @@ function normalizedSource(source, language, kind = "paragraph", options = {}) {
     // TeX commands, code and explicit doubled backslashes remain literal.
     const unwrap =
       options.unwrapBackslashes !== false &&
+      !containingLiteral(literals, end - 1) &&
       following &&
       /[^\\]\\$/.test(body) &&
       !body.slice(0, -1).includes("\\") &&
@@ -296,11 +381,19 @@ function normalizedSource(source, language, kind = "paragraph", options = {}) {
           (cjk.test(right) || cjkPunctuation.test(right))) ||
         (["ja", "zh"].includes(language?.split("-")[0]) &&
           (cjk.test(left) || cjk.test(right)));
-      if (
+      if (containingLiteral(literals, previous.end)) {
+        append(
+          source.slice(previous.end, line.start + lead),
+          previous.end,
+          line.start + lead,
+        );
+      } else if (
         (
-          source.slice(previous.end, line.start + lead).match(/\r\n|\r|\n/g) ||
-          []
-        ).length > 1
+          source
+            .slice(previous.end, line.start + lead)
+            .match(/\r\n|[\r\n\u0085\u2028\u2029\f]/g) || []
+        ).length > 1 ||
+        /[\u2029\f]/.test(source.slice(previous.end, line.start + lead))
       )
         append("\n\n", previous.end, line.start + lead);
       else if (!joinedHyphen && !joinedCJK)
@@ -308,6 +401,11 @@ function normalizedSource(source, language, kind = "paragraph", options = {}) {
     }
     for (let i = 0; i < body.length;) {
       const pos = line.start + lead + i;
+      if (containingLiteral(literals, pos)) {
+        append(body[i], pos, pos + 1);
+        i++;
+        continue;
+      }
       if (body[i] === "\u00ad") {
         i++;
         continue;
@@ -341,11 +439,13 @@ export function modelText(segment, language, options = {}) {
   const kind =
     typeof segment === "object" && unitKinds.has(segment.kind)
       ? segment.kind
-      : lineKind(source.split(/\r\n|\r|\n/)[0]);
+      : lineKind(source.split(/\r\n|[\r\n\u0085\u2028\u2029\f]/)[0]);
   return normalizedSource(source, language, kind, options).text;
 }
 
-function sentenceRanges(text, language) {
+// Shared with the inference worker: do not split repaired sentence units again
+// at a title, a numbered reference, or an enumeration marker.
+export function sentenceRanges(text, language) {
   let spans;
   if (typeof Intl.Segmenter === "function") {
     let segmenter;
@@ -359,23 +459,80 @@ function sentenceRanges(text, language) {
       s.index + s.segment.length,
     ]);
   } else {
-    spans = Array.from(
-      text.matchAll(/[^。！？.!?]+(?:[。！？.!?]+["”’')）]*|$)|[。！？.!?]+/g),
-      (m) => [m.index, m.index + m[0].length],
-    );
+    spans = [];
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (!/[。！？.!?؟]/.test(text[i])) continue;
+      if (text[i] === "." && /[\p{L}\p{N}]/u.test(text[i + 1] || "")) continue;
+      let end = i + 1;
+      while (end < text.length && /[。！？.!?؟"”’')）\]]/.test(text[end]))
+        end++;
+      spans.push([start, end]);
+      start = end;
+      i = end - 1;
+    }
+    if (start < text.length) spans.push([start, text.length]);
   }
-  return spans
+  const trimmed = spans
     .map(([start, end]) => {
       while (start < end && /\s/.test(text[start])) start++;
       while (end > start && /\s/.test(text[end - 1])) end--;
       return [start, end];
     })
     .filter(([start, end]) => end > start);
+  const locale = language?.split("-")[0] || "en";
+  const titles = {
+    en: /\b(?:Dr|Prof|Mr|Mrs|Ms|Rev)\.$/,
+    de: /\b(?:Dr|Prof|Hr|Fr)\.$/,
+    fr: /\b(?:M|Mme|Mlle|Dr|Pr)\.$/,
+    es: /\b(?:Sr|Sra|Srta|Dr|Dra|Prof)\.$/,
+    it: /\b(?:Dott|Dottssa|Prof)\.$/,
+    pt: /\b(?:Sr|Sra|Dr|Dra|Prof)\.$/,
+  };
+  const merged = [],
+    literals = explicitLiteralRanges(text);
+  for (const range of trimmed) {
+    const previous = merged.at(-1);
+    if (!previous) {
+      merged.push([...range]);
+      continue;
+    }
+    const before = text.slice(previous[0], previous[1]),
+      after = text.slice(range[0], range[1]);
+    const gap = text.slice(previous[1], range[0]);
+    const hardBreak =
+      /[\u2029\f]/.test(gap) ||
+      (gap.match(/\r\n|[\r\n\u0085\u2028]/g) || []).length > 1;
+    const title =
+      titles[locale]?.test(before) &&
+      /^(?:\p{Lu}|(?:van|von|de|del)\s+\p{Lu})/u.test(after);
+    const reference =
+      /\b(?:Fig|Figs|Eq|Eqs|Sec|Secs|No|Nos|Ch|Vol|pp?)\.$/i.test(before) &&
+      /^(?:[(（]?\d|[IVX]+\b)/.test(after);
+    const initial =
+      /^(?:(?:Dr|Prof|Mr|Mrs|Ms)\.\s+)?(?:\p{Lu}\.\s*){1,3}$/u.test(before) &&
+      /^\p{Lu}\p{Ll}/u.test(after);
+    const enumeration = /^(?:\d+|[a-z])\.$/.test(before);
+    const explanatory = /\b(?:e\.g|i\.e|vs)\.$/i.test(before);
+    if (
+      containingLiteral(literals, previous[1]) ||
+      (!hardBreak &&
+        (title || reference || initial || enumeration || explanatory))
+    )
+      previous[1] = range[1];
+    else merged.push([...range]);
+  }
+  return merged;
 }
 
 function boundedRanges(text, ranges, maxChars, pack) {
   if (!Number.isFinite(maxChars)) return ranges;
-  const chunks = [];
+  const chunks = [],
+    literals = explicitLiteralRanges(text);
+  const graphemes =
+    typeof Intl.Segmenter === "function"
+      ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+      : null;
   for (let [start, end] of ranges) {
     while (end - start > maxChars) {
       let cut = start + maxChars;
@@ -389,6 +546,22 @@ function boundedRanges(text, ranges, maxChars, pack) {
           start +
           boundary.index +
           (boundary[0].trim() ? boundary[0].length : 0);
+      if (graphemes) {
+        let safe = start;
+        for (const part of graphemes.segment(
+          text.slice(start, Math.min(end, cut + 16)),
+        )) {
+          if (start + part.index > cut) break;
+          safe = start + part.index;
+        }
+        if (safe > start) cut = safe;
+      }
+      const literal = containingLiteral(literals, cut);
+      if (literal && cut > literal[0]) {
+        // An indivisible literal may exceed the budget. The model adapter will
+        // replace it with a short placeholder; cutting it would change meaning.
+        cut = literal[0] > start ? literal[0] : literal[1];
+      }
       chunks.push([start, cut]);
       start = cut;
       while (start < end && /\s/.test(text[start])) start++;
@@ -427,12 +600,13 @@ export function segmentText(text, language, options = {}) {
       prose && (granularity === "sentence" || normalized.text.length > maxChars)
         ? sentenceRanges(normalized.text, language)
         : [[0, normalized.text.length]];
-    ranges = boundedRanges(
-      normalized.text,
-      ranges,
-      maxChars,
-      granularity === "paragraph",
-    );
+    if (!["table", "code"].includes(unit.kind))
+      ranges = boundedRanges(
+        normalized.text,
+        ranges,
+        maxChars,
+        granularity === "paragraph",
+      );
     for (let i = 0; i < ranges.length; i++) {
       const [a, b] = ranges[i];
       if (b <= a) continue;
@@ -522,6 +696,9 @@ export function validateDocument(doc) {
     text: doc.text,
     segments,
     engine: typeof doc.engine === "string" ? doc.engine : "",
+    ...(normalizeEngineIdentity(doc.engineIdentity)
+      ? { engineIdentity: normalizeEngineIdentity(doc.engineIdentity) }
+      : {}),
     title: String(
       doc.title || doc.text.trim().split(/\r?\n/)[0] || "無題",
     ).slice(0, 96),
